@@ -1,6 +1,13 @@
 # Inventar QR
 
-## Start
+Inventar QR ist eine kleine Web-App zur Geräteinventarisierung mit QR-Codes. QR-Codes führen auf eine mobil nutzbare Geräteseite, während Inventar, Kunden, Benutzer, Backups und Einstellungen im geschützten Adminbereich verwaltet werden.
+
+## Dokumentation
+
+- [Installation auf Ubuntu 24.04](INSTALL_UBUNTU_24_04.md)
+- [Changelog](CHANGELOG.md)
+
+## Lokaler Start
 
 Windows:
 
@@ -20,14 +27,15 @@ Danach im Browser öffnen:
 http://localhost:8123/
 ```
 
-Beim ersten Start wird ein Admin-Zugang angelegt:
+Beim ersten Start wird ein Admin-Zugang angelegt. Das initiale Passwort steht in:
 
 ```text
-Benutzer: admin
-Passwort: data/initial-admin-password.txt
+data/initial-admin-password.txt
 ```
 
-Nach der ersten Anmeldung das Passwort in der App unter **Erreichbarkeit und Backups** ändern und die Datei `data/initial-admin-password.txt` löschen.
+Nach der ersten Anmeldung sollte das Passwort in den Einstellungen geändert und die Datei gelöscht werden.
+
+## Daten
 
 Die Inventardaten liegen in SQLite:
 
@@ -35,90 +43,70 @@ Die Inventardaten liegen in SQLite:
 data/inventory.sqlite
 ```
 
+Weitere Konfigurationen liegen unter:
+
+```text
+data/config.json
+data/users.json
+data/customers.json
+```
+
 ## Linux als Dienst
 
-Ubuntu 24.04 vorbereiten:
+Für Ubuntu 24.04 ist die vollständige Anleitung hier:
+
+[Installation auf Ubuntu 24.04](INSTALL_UBUNTU_24_04.md)
+
+Kurzform:
 
 ```sh
 sudo apt update
 sudo apt install -y git python3
-```
-
-Projekt holen und Dienst installieren:
-
-```sh
-git clone <repo-url> inventar-qr
-cd inventar-qr
-sh install-systemd.sh
+git clone https://github.com/Hinaaak/inventory-app.git inventory-app
+cd inventory-app
+sh install-systemd.sh inventory-app
 ```
 
 Danach:
 
 ```sh
-systemctl status inventar-qr
-sudo systemctl restart inventar-qr
-sudo systemctl stop inventar-qr
+systemctl status inventory-app
+sudo systemctl restart inventory-app
+sudo systemctl stop inventory-app
 ```
 
-Der Dienst wird automatisch beim Neustart gestartet.
+## Reverse-Proxy
 
-## Erreichbarkeit ohne öffentliche IP
+Die App läuft intern auf Port `8123`. Für echte QR-Codes sollte sie per HTTPS über einen Reverse-Proxy erreichbar sein.
 
-Der QR-Code enthält eine URL zur Geräteseite. Diese URL muss vom Handy erreichbar sein.
+In der App unter `Einstellungen` muss die öffentliche Basisadresse eingetragen werden, z. B.:
 
-Geeignete Varianten ohne öffentliche IP:
-
-- Tailscale oder ein anderes VPN
-- Cloudflare Tunnel
-- interner Reverse Proxy im Firmennetz
-
-Die erreichbare Adresse in der App unter **Erreichbarkeit und Backups** als **Oeffentliche Basisadresse** eintragen.
+```text
+https://inventory.example.de/
+```
 
 ## Backups
 
-Die Daten liegen in:
+Backups können in der App erstellt und importiert werden. Das lokale Backup-Ziel kann unter `Einstellungen` gesetzt werden, z. B.:
 
 ```text
-data/assets.json
-data/config.json
-```
-
-Automatische Backups liegen in:
-
-```text
-data/backups/
-```
-
-In der App können Backups manuell erstellt, heruntergeladen und über **Import** wieder eingespielt werden.
-
-Das lokale Backup-Ziel kann in der App unter **Erreichbarkeit und Backups** gesetzt werden, z. B.:
-
-```text
-/var/backups/inventar-qr
+/var/backups/inventory-app
 ```
 
 Der Dienstbenutzer muss dort Schreibrechte haben.
 
 ## Updates
 
-Empfohlener Betrieb ist ein GitHub-Checkout auf dem Server:
+Updates auf dem Server:
 
 ```sh
-git clone <repo-url> inventar-qr
-cd inventar-qr
-sh install-systemd.sh
+sh update.sh inventory-app
 ```
 
-Updates:
-
-```sh
-sh update.sh
-```
-
-Oder in der App über **Update aus GitHub**. Die App-Funktion setzt voraus, dass das Projekt ein Git-Checkout ist und `git pull --ff-only` ohne interaktive Eingabe funktioniert.
+Oder über die App mit `Update aus GitHub`, wenn das Projekt auf dem Server ein Git-Checkout ist und `git pull --ff-only` ohne interaktive Eingabe funktioniert.
 
 ## Zugriffskonzept
 
-- Die QR-Geraeteseite ist ohne Login erreichbar.
-- Inventarverwaltung, Backups, Einstellungen und Updates brauchen den Admin-Login.
-- Fuer mehrere Benutzer/Rollen ist spaeter eine Erweiterung vorgesehen; aktuell gibt es einen Admin-Zugang.
+- Die QR-Geräteseite ist ohne Login erreichbar.
+- Inventarverwaltung, Kunden, Benutzer, Backups, Einstellungen und Updates brauchen den Login.
+- Benutzer können Rollen wie Admin, Techniker oder Nur-Lesen erhalten.

@@ -74,6 +74,7 @@ const fields = {
 
 const assetList = document.querySelector("#assetList");
 const deviceSidebarTools = document.querySelector("#deviceSidebarTools");
+const topbar = document.querySelector(".topbar");
 const assetForm = document.querySelector("#assetForm");
 const qrPreviewField = document.querySelector("#qrPreviewField");
 const qrCanvas = document.querySelector("#qrCanvas");
@@ -292,6 +293,7 @@ async function route() {
     showLogin();
     return;
   }
+  topbar.hidden = false;
   appView.hidden = false;
   mobileView.hidden = true;
   loginView.hidden = true;
@@ -300,6 +302,7 @@ async function route() {
 }
 
 function showLogin() {
+  topbar.hidden = false;
   appView.hidden = true;
   mobileView.hidden = true;
   loginView.hidden = false;
@@ -461,6 +464,7 @@ async function renderMobile(id) {
       asset = null;
     }
   }
+  topbar.hidden = true;
   appView.hidden = true;
   loginView.hidden = true;
   logoutBtn.hidden = true;
@@ -469,7 +473,6 @@ async function renderMobile(id) {
   if (!asset) {
     mobileView.innerHTML = `
       <article class="mobile-card">
-        <p class="kicker">Inventar</p>
         <h1>Gerät nicht gefunden</h1>
         <p>Der QR-Code verweist auf keinen gespeicherten Eintrag.</p>
       </article>
@@ -479,7 +482,6 @@ async function renderMobile(id) {
 
   mobileView.innerHTML = `
     <article class="mobile-card">
-      <p class="kicker">Geräteinformation</p>
       <h1>${escapeHtml(asset.name || "Ohne Bezeichnung")}</h1>
       <p class="asset-number">${escapeHtml(asset.inventoryNumber || "Keine Inventarnummer")}</p>
       <span class="status ${statusClass(asset.status)}">${escapeHtml(asset.status || "Unbekannt")}</span>
