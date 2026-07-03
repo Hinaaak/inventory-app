@@ -139,6 +139,32 @@ button,
   padding: 0 32px 32px;
 }
 
+.main-menu {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.menu-item {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  min-height: 38px;
+  text-align: left;
+}
+
+.menu-item.active {
+  border-color: var(--brand);
+  box-shadow: inset 3px 0 0 var(--brand);
+  color: var(--brand-dark);
+  font-weight: 700;
+}
+
+.sidebar-filter {
+  margin-bottom: 14px;
+}
+
 .login-view {
   display: grid;
   min-height: calc(100vh - 120px);
@@ -396,6 +422,26 @@ textarea {
   font-size: 13px;
 }
 
+.admin-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-row {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto;
+  padding: 10px;
+}
+
+.admin-row strong,
+.admin-row span {
+  overflow-wrap: anywhere;
+}
+
 canvas {
   image-rendering: pixelated;
   max-width: 100%;
@@ -512,6 +558,10 @@ canvas {
     grid-template-columns: 1fr;
   }
 
+  .admin-row {
+    grid-template-columns: 1fr;
+  }
+
   .info-row {
     grid-template-columns: 1fr;
   }
@@ -546,14 +596,14 @@ canvas {
     break-inside: avoid;
     display: grid;
     gap: 4mm;
-    grid-template-columns: 28mm minmax(0, 1fr);
-    min-height: 38mm;
+    grid-template-columns: 34mm minmax(0, 1fr);
+    min-height: 42mm;
     padding: 4mm;
   }
 
   .print-label canvas {
-    height: 28mm;
-    width: 28mm;
+    height: 34mm;
+    width: 34mm;
   }
 
   .print-label strong,

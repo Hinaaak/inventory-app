@@ -45,6 +45,17 @@
 
       <section id="appView" class="workspace">
         <aside class="sidebar">
+          <nav class="main-menu" aria-label="Hauptmenue">
+            <button class="menu-item active" type="button" data-view="assets">Geraete</button>
+            <button class="menu-item" type="button" data-view="customers">Kunden</button>
+            <button class="menu-item" type="button" data-view="users">Benutzer</button>
+            <button class="menu-item" type="button" data-view="trash">Zuletzt geloescht</button>
+            <button class="menu-item" type="button" data-view="settings">Einstellungen</button>
+          </nav>
+          <label class="sidebar-filter">
+            Kunde
+            <select id="customerSwitchField"></select>
+          </label>
           <div class="toolbar">
             <div class="search">
               <span>⌕</span>
@@ -71,7 +82,7 @@
           <div id="assetList" class="asset-list" aria-label="Inventarliste"></div>
         </aside>
 
-        <section class="detail">
+        <section id="assetsView" class="detail app-section">
           <form id="assetForm" class="panel">
             <div class="panel-head">
               <div>
@@ -92,6 +103,10 @@
               <label>
                 Inventarnummer
                 <input id="inventoryField" name="inventoryNumber" required placeholder="INV-0001" />
+              </label>
+              <label>
+                Kunde
+                <select id="assetCustomerField" name="customerId"></select>
               </label>
               <label>
                 Kategorie
@@ -154,11 +169,6 @@
               <textarea id="publicInfoField" name="publicInfo" rows="3" placeholder="Kurzer Hinweis für Kunden oder Techniker"></textarea>
             </label>
 
-            <label>
-              Interne Notizen
-              <textarea id="notesField" name="notes" rows="4" placeholder="Nicht öffentlich: Zubehör, Zustand, interne Hinweise"></textarea>
-            </label>
-
             <div class="qr-area">
               <div>
                 <label>
@@ -174,7 +184,47 @@
               </div>
             </div>
           </form>
+        </section>
 
+        <section id="customersView" class="detail app-section" hidden>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">Kunden</p>
+                <h2>Kundenverwaltung</h2>
+              </div>
+              <button id="addCustomerBtn" type="button" class="primary">Kunde neu</button>
+            </div>
+            <div id="customerAdminList" class="admin-list"></div>
+          </section>
+        </section>
+
+        <section id="usersView" class="detail app-section" hidden>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">Benutzer</p>
+                <h2>Benutzer und Rollen</h2>
+              </div>
+              <button id="addUserBtn" type="button" class="primary">Benutzer neu</button>
+            </div>
+            <div id="userAdminList" class="admin-list"></div>
+          </section>
+        </section>
+
+        <section id="trashView" class="detail app-section" hidden>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">Papierkorb</p>
+                <h2>Zuletzt geloescht</h2>
+              </div>
+            </div>
+            <div id="trashList" class="admin-list"></div>
+          </section>
+        </section>
+
+        <section id="settingsView" class="detail app-section" hidden>
           <section class="panel settings-panel">
             <div class="panel-head">
               <div>

@@ -49,14 +49,19 @@ const defaultConfig = {
 };
 
 let assets = [];
+let users = [];
+let customers = [];
 let config = { ...defaultConfig };
 let selectedId = null;
+let selectedCustomerId = "all";
+let currentView = "assets";
 let serverMode = location.protocol === "http:" || location.protocol === "https:";
 let authenticated = false;
 
 const fields = {
   name: document.querySelector("#nameField"),
   inventoryNumber: document.querySelector("#inventoryField"),
+  customerId: document.querySelector("#assetCustomerField"),
   category: document.querySelector("#categoryField"),
   status: document.querySelector("#statusField"),
   serialNumber: document.querySelector("#serialField"),
@@ -68,7 +73,6 @@ const fields = {
   supportPhone: document.querySelector("#supportPhoneField"),
   supportEmail: document.querySelector("#supportEmailField"),
   publicInfo: document.querySelector("#publicInfoField"),
-  notes: document.querySelector("#notesField"),
 };
 
 const assetList = document.querySelector("#assetList");
@@ -94,6 +98,17 @@ const usernameField = document.querySelector("#usernameField");
 const passwordField = document.querySelector("#passwordField");
 const loginError = document.querySelector("#loginError");
 const newPasswordField = document.querySelector("#newPasswordField");
+const customerSwitchField = document.querySelector("#customerSwitchField");
+const customerAdminList = document.querySelector("#customerAdminList");
+const userAdminList = document.querySelector("#userAdminList");
+const trashList = document.querySelector("#trashList");
+const sectionMap = {
+  assets: document.querySelector("#assetsView"),
+  customers: document.querySelector("#customersView"),
+  users: document.querySelector("#usersView"),
+  trash: document.querySelector("#trashView"),
+  settings: document.querySelector("#settingsView"),
+};
 
 document.querySelector("#newAssetBtn").addEventListener("click", createAsset);
 document.querySelector("#deleteBtn").addEventListener("click", deleteSelectedAsset);
@@ -107,6 +122,19 @@ document.querySelector("#createBackupBtn").addEventListener("click", createBacku
 document.querySelector("#updateBtn").addEventListener("click", runUpdate);
 document.querySelector("#changePasswordBtn").addEventListener("click", changePassword);
 logoutBtn.addEventListener("click", logout);
+document.querySelector("#addCustomerBtn").addEventListener("click", addCustomer);
+document.querySelector("#addUserBtn").addEventListener("click", addUser);
+customerSwitchField.addEventListener("change", () => {
+  selectedCustomerId = customerSwitchField.value;
+  selectedId = visibleAssets()[0]?.id || null;
+  render();
+});
+document.querySelectorAll(".menu-item").forEach((button) => {
+  button.addEventListener("click", () => {
+    currentView = button.dataset.view;
+    render();
+  });
+});
 
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -142,8 +170,11 @@ async function loadState() {
       if (response.ok) {
         const state = await response.json();
         assets = normalizeAssets(state.assets?.length ? state.assets : sampleAssets);
+        users = state.users || [];
+        customers = normalizeCustomers(state.customers || []);
         config = normalizeConfig(state.config);
-        selectedId = assets[0]?.id || null;
+        selectedCustomerId = selectedCustomerId === "all" ? "all" : selectedCustomerId;
+        selectedId = visibleAssets()[0]?.id || null;
         authenticated = true;
         return true;
       }
@@ -153,8 +184,10 @@ async function loadState() {
   }
 
   assets = normalizeAssets(readJson(STORAGE_KEY, sampleAssets));
+  users = [{ username: "admin", role: "admin" }];
+  customers = normalizeCustomers([{ id: "default", name: "Standardkunde", notes: "" }]);
   config = normalizeConfig(readJson(CONFIG_KEY, defaultConfig));
-  selectedId = assets[0]?.id || null;
+  selectedId = visibleAssets()[0]?.id || null;
   authenticated = !serverMode;
   return true;
 }
@@ -194,9 +227,18 @@ function normalizeAssets(entries) {
     supportPhone: "",
     supportEmail: "",
     publicInfo: "",
-    notes: "",
     lastScan: "",
+    customerId: asset.customerId || "default",
+    deletedAt: asset.deletedAt || "",
     ...asset,
+  }));
+}
+
+function normalizeCustomers(entries) {
+  return (entries.length ? entries : [{ id: "default", name: "Standardkunde", notes: "" }]).map((customer) => ({
+    id: customer.id || newId(),
+    name: customer.name || "Kunde",
+    notes: customer.notes || "",
   }));
 }
 
@@ -207,6 +249,24 @@ async function saveAssets() {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(assets),
+  });
+}
+
+async function saveCustomers() {
+  if (!serverMode) return;
+  await fetch("/api/customers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(customers),
+  });
+}
+
+async function saveUsers() {
+  if (!serverMode) return;
+  await fetch("/api/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(users),
   });
 }
 
@@ -273,12 +333,24 @@ async function logout() {
 
 function render() {
   renderNotice();
+  renderNavigation();
+  renderCustomers();
   renderStats();
   renderList();
   renderForm();
   renderSettings();
   renderQr();
+  renderAdminLists();
   loadBackupList();
+}
+
+function renderNavigation() {
+  Object.entries(sectionMap).forEach(([key, section]) => {
+    section.hidden = key !== currentView;
+  });
+  document.querySelectorAll(".menu-item").forEach((button) => {
+    button.classList.toggle("active", button.dataset.view === currentView);
+  });
 }
 
 function renderNotice() {
@@ -289,22 +361,23 @@ function renderNotice() {
 }
 
 function renderStats() {
-  document.querySelector("#assetCount").textContent = assets.length;
-  document.querySelector("#openCount").textContent = assets.filter((asset) => asset.status !== "Ausgemustert").length;
-  document.querySelector("#serviceCount").textContent = assets.filter((asset) => asset.status === "Service").length;
+  const activeAssets = visibleAssets();
+  document.querySelector("#assetCount").textContent = activeAssets.length;
+  document.querySelector("#openCount").textContent = activeAssets.filter((asset) => asset.status !== "Ausgemustert").length;
+  document.querySelector("#serviceCount").textContent = activeAssets.filter((asset) => asset.status === "Service").length;
 }
 
 function renderList() {
   const query = document.querySelector("#searchInput").value.trim().toLowerCase();
-  const visibleAssets = assets.filter((asset) => Object.values(asset).join(" ").toLowerCase().includes(query));
+  const listAssets = visibleAssets().filter((asset) => Object.values(asset).join(" ").toLowerCase().includes(query));
 
   assetList.innerHTML = "";
-  if (!visibleAssets.length) {
+  if (!listAssets.length) {
     assetList.innerHTML = '<p class="empty">Keine Geraete gefunden.</p>';
     return;
   }
 
-  visibleAssets.forEach((asset) => {
+  listAssets.forEach((asset) => {
     const item = document.createElement("button");
     item.type = "button";
     item.className = `asset-item ${asset.id === selectedId ? "active" : ""}`;
@@ -319,6 +392,25 @@ function renderList() {
     });
     assetList.appendChild(item);
   });
+}
+
+function visibleAssets() {
+  return assets.filter((asset) => !asset.deletedAt && (selectedCustomerId === "all" || asset.customerId === selectedCustomerId));
+}
+
+function deletedAssets() {
+  return assets.filter((asset) => Boolean(asset.deletedAt));
+}
+
+function renderCustomers() {
+  const options = ['<option value="all">Alle Kunden</option>']
+    .concat(customers.map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</option>`))
+    .join("");
+  customerSwitchField.innerHTML = options;
+  customerSwitchField.value = selectedCustomerId;
+  fields.customerId.innerHTML = customers
+    .map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</option>`)
+    .join("");
 }
 
 function renderForm() {
@@ -394,7 +486,6 @@ async function renderMobile(id) {
       <div class="mobile-actions">
         ${contactLink("tel", asset.supportPhone, "Anrufen")}
         ${contactLink("mailto", asset.supportEmail, "E-Mail")}
-        <button type="button" id="confirmScanBtn" class="primary">Scan bestaetigen</button>
       </div>
       <div class="info-grid">
         ${infoRow("Geraetename", asset.name)}
@@ -409,17 +500,6 @@ async function renderMobile(id) {
     </article>
   `;
 
-  document.querySelector("#confirmScanBtn").addEventListener("click", async () => {
-    if (!authenticated) {
-      alert("Scan wurde lokal angezeigt. Eine Erfassung ist nur nach Anmeldung moeglich.");
-      return;
-    }
-    const internalAsset = assets.find((entry) => entry.id === asset.id);
-    if (!internalAsset) return;
-    internalAsset.lastScan = new Date().toISOString();
-    await saveAssets();
-    await renderMobile(asset.id);
-  });
 }
 
 function createAsset() {
@@ -430,6 +510,7 @@ function createAsset() {
       name: "Neues Geraet",
       inventoryNumber: `INV-${nextNumber}`,
       deviceId: `ID-${nextNumber}`,
+      customerId: selectedCustomerId === "all" ? customers[0]?.id || "default" : selectedCustomerId,
     },
   ])[0];
   assets.unshift(asset);
@@ -443,16 +524,16 @@ function createAsset() {
 function deleteSelectedAsset() {
   const asset = getSelectedAsset();
   if (!asset) return;
-  if (!confirm(`"${asset.name}" wirklich loeschen?`)) return;
-  assets = assets.filter((entry) => entry.id !== asset.id);
-  selectedId = assets[0]?.id || null;
+  if (!confirm(`"${asset.name}" in den Papierkorb verschieben?`)) return;
+  asset.deletedAt = new Date().toISOString();
+  selectedId = visibleAssets()[0]?.id || null;
   saveAssets();
   render();
 }
 
 function printLabels() {
   labelSheet.innerHTML = "";
-  assets.forEach((asset) => {
+  visibleAssets().forEach((asset) => {
     const label = document.createElement("article");
     label.className = "print-label";
     const canvas = document.createElement("canvas");
@@ -467,6 +548,103 @@ function printLabels() {
     drawQr(canvas, assetUrl(asset.id), 6);
   });
   window.print();
+}
+
+function renderAdminLists() {
+  customerAdminList.innerHTML = customers
+    .map(
+      (customer) => `
+        <div class="admin-row" data-customer-id="${escapeHtml(customer.id)}">
+          <input class="customer-name" value="${escapeHtml(customer.name)}" />
+          <input class="customer-notes" value="${escapeHtml(customer.notes)}" placeholder="Notiz" />
+          <button type="button" class="secondary save-customer">Speichern</button>
+        </div>`
+    )
+    .join("");
+  customerAdminList.querySelectorAll(".save-customer").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const row = button.closest(".admin-row");
+      const customer = customers.find((entry) => entry.id === row.dataset.customerId);
+      customer.name = row.querySelector(".customer-name").value.trim();
+      customer.notes = row.querySelector(".customer-notes").value.trim();
+      await saveCustomers();
+      render();
+    });
+  });
+
+  userAdminList.innerHTML = users
+    .map(
+      (user) => `
+        <div class="admin-row" data-username="${escapeHtml(user.username)}">
+          <input class="user-name" value="${escapeHtml(user.username)}" />
+          <select class="user-role">
+            <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin</option>
+            <option value="technician" ${user.role === "technician" ? "selected" : ""}>Techniker</option>
+            <option value="readonly" ${user.role === "readonly" ? "selected" : ""}>Nur Lesen</option>
+          </select>
+          <input class="user-password" type="password" placeholder="Neues Passwort optional" />
+          <button type="button" class="secondary save-user">Speichern</button>
+        </div>`
+    )
+    .join("");
+  userAdminList.querySelectorAll(".save-user").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const row = button.closest(".admin-row");
+      const user = users.find((entry) => entry.username === row.dataset.username);
+      user.username = row.querySelector(".user-name").value.trim();
+      user.role = row.querySelector(".user-role").value;
+      const password = row.querySelector(".user-password").value;
+      if (password) user.password = password;
+      await saveUsers();
+      users.forEach((entry) => delete entry.password);
+      render();
+    });
+  });
+
+  trashList.innerHTML = deletedAssets().length
+    ? deletedAssets()
+        .map(
+          (asset) => `
+            <div class="admin-row" data-asset-id="${escapeHtml(asset.id)}">
+              <strong>${escapeHtml(asset.name || "Ohne Bezeichnung")}</strong>
+              <span>${escapeHtml(asset.inventoryNumber || "")}</span>
+              <span>${escapeHtml(formatDateTime(asset.deletedAt))}</span>
+              <button type="button" class="secondary restore-asset">Wiederherstellen</button>
+              <button type="button" class="danger purge-asset">Endgueltig loeschen</button>
+            </div>`
+        )
+        .join("")
+    : '<p class="empty">Der Papierkorb ist leer.</p>';
+  trashList.querySelectorAll(".restore-asset").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const asset = assets.find((entry) => entry.id === button.closest(".admin-row").dataset.assetId);
+      asset.deletedAt = "";
+      await saveAssets();
+      render();
+    });
+  });
+  trashList.querySelectorAll(".purge-asset").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const id = button.closest(".admin-row").dataset.assetId;
+      if (!confirm("Eintrag endgueltig loeschen?")) return;
+      assets = assets.filter((entry) => entry.id !== id);
+      await saveAssets();
+      render();
+    });
+  });
+}
+
+function addCustomer() {
+  customers.push({ id: newId(), name: "Neuer Kunde", notes: "" });
+  saveCustomers();
+  render();
+}
+
+function addUser() {
+  users.push({ username: `user${users.length + 1}`, role: "technician", password: "BitteAendern123" });
+  saveUsers();
+  users.forEach((entry) => delete entry.password);
+  render();
 }
 
 function exportBackup() {
