@@ -427,6 +427,47 @@ textarea {
   gap: 10px;
 }
 
+.admin-split {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+}
+
+.admin-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-pick {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  min-height: 58px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.admin-pick.active {
+  border-color: var(--brand);
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+
+.admin-pick span {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.admin-detail {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
 .admin-row {
   align-items: center;
   border: 1px solid var(--line);
@@ -558,6 +599,7 @@ canvas {
     grid-template-columns: 1fr;
   }
 
+  .admin-split,
   .admin-row {
     grid-template-columns: 1fr;
   }

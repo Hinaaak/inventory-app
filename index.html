@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="de">
   <head>
     <meta charset="utf-8" />
@@ -45,13 +45,14 @@
 
       <section id="appView" class="workspace">
         <aside class="sidebar">
-          <nav class="main-menu" aria-label="Hauptmenue">
-            <button class="menu-item active" type="button" data-view="assets">Geraete</button>
+          <nav class="main-menu" aria-label="Hauptmenü">
+            <button class="menu-item active" type="button" data-view="assets">Geräte</button>
             <button class="menu-item" type="button" data-view="customers">Kunden</button>
             <button class="menu-item" type="button" data-view="users">Benutzer</button>
-            <button class="menu-item" type="button" data-view="trash">Zuletzt geloescht</button>
+            <button class="menu-item" type="button" data-view="trash">Zuletzt gelöscht</button>
             <button class="menu-item" type="button" data-view="settings">Einstellungen</button>
           </nav>
+          <div id="deviceSidebarTools">
           <label class="sidebar-filter">
             Kunde
             <select id="customerSwitchField"></select>
@@ -80,6 +81,7 @@
           </div>
 
           <div id="assetList" class="asset-list" aria-label="Inventarliste"></div>
+          </div>
         </aside>
 
         <section id="assetsView" class="detail app-section">
@@ -139,10 +141,6 @@
                 <input id="warrantyUntilField" name="warrantyUntil" type="date" />
               </label>
               <label>
-                ID
-                <input id="deviceIdField" name="deviceId" placeholder="z. B. Kundengeraet 4711" />
-              </label>
-              <label>
                 Standort
                 <input id="locationField" name="location" placeholder="Büro, Raum, Regal" />
               </label>
@@ -165,8 +163,8 @@
             </div>
 
             <label>
-              Hinweis auf der QR-Seite
-              <textarea id="publicInfoField" name="publicInfo" rows="3" placeholder="Kurzer Hinweis für Kunden oder Techniker"></textarea>
+              Interne Notizen
+              <textarea id="notesField" name="notes" rows="3" placeholder="Interne Hinweise, Zubehör, Besonderheiten"></textarea>
             </label>
 
             <div class="qr-area">
@@ -175,7 +173,7 @@
                   QR-Link
                   <textarea id="qrPreviewField" rows="6" readonly></textarea>
                 </label>
-                <p class="hint">Der QR-Code oeffnet die Geraeteseite im Browser. Die Adresse muss fuer Handys erreichbar sein, z. B. ueber VPN, Tailscale oder einen Tunnel.</p>
+                <p class="hint">Der QR-Code öffnet die Geräteseite im Browser.</p>
                 <p id="qrWarning" class="warning-text"></p>
               </div>
               <div class="qr-card">
@@ -217,7 +215,7 @@
             <div class="panel-head">
               <div>
                 <p class="kicker">Papierkorb</p>
-                <h2>Zuletzt geloescht</h2>
+                <h2>Zuletzt gelöscht</h2>
               </div>
             </div>
             <div id="trashList" class="admin-list"></div>
@@ -236,7 +234,7 @@
 
             <div class="form-grid">
               <label>
-                Oeffentliche Basisadresse
+                Öffentliche Basisadresse
                 <input id="baseUrlField" type="url" placeholder="https://inventar.example/" />
               </label>
               <label>
@@ -264,7 +262,7 @@
             <div class="backup-actions">
               <button id="createBackupBtn" type="button" class="secondary">Backup jetzt erstellen</button>
               <button id="updateBtn" type="button" class="secondary">Update aus GitHub</button>
-              <button id="changePasswordBtn" type="button" class="secondary">Passwort aendern</button>
+              <button id="changePasswordBtn" type="button" class="secondary">Passwort ändern</button>
             </div>
             <p id="updateStatus" class="hint"></p>
             <div id="backupList" class="backup-list"></div>

@@ -1,4 +1,4 @@
-const STORAGE_KEY = "inventory-qr-assets-v2";
+﻿const STORAGE_KEY = "inventory-qr-assets-v2";
 const CONFIG_KEY = "inventory-qr-config-v1";
 
 const sampleAssets = [
@@ -10,13 +10,11 @@ const sampleAssets = [
     status: "Ausgegeben",
     serialNumber: "PF4ABC12",
     warrantyUntil: "2028-03-12",
-    deviceId: "KDG-4711",
-    location: "Buero 2.14",
+    location: "Büro 2.14",
     owner: "Max Mustermann",
     purchaseDate: "2025-03-12",
     supportPhone: "+49 123 456789",
     supportEmail: "support@firma.de",
-    publicInfo: "Bitte halten Sie diese Geraete-ID bei Rueckfragen bereit.",
     notes: "Dockingstation und Netzteil vorhanden.",
     lastScan: "",
   },
@@ -28,13 +26,11 @@ const sampleAssets = [
     status: "In Betrieb",
     serialNumber: "CNB9K44210",
     warrantyUntil: "2027-09-04",
-    deviceId: "KDG-4712",
     location: "Flur Verwaltung",
     owner: "Office",
     purchaseDate: "2024-09-04",
     supportPhone: "+49 123 456789",
     supportEmail: "support@firma.de",
-    publicInfo: "Bei Papierstau oder Tonerwechsel bitte die ID durchgeben.",
     notes: "Toner: 59A.",
     lastScan: "",
   },
@@ -54,6 +50,8 @@ let customers = [];
 let config = { ...defaultConfig };
 let selectedId = null;
 let selectedCustomerId = "all";
+let selectedCustomerAdminId = null;
+let selectedUserAdminName = null;
 let currentView = "assets";
 let serverMode = location.protocol === "http:" || location.protocol === "https:";
 let authenticated = false;
@@ -66,16 +64,16 @@ const fields = {
   status: document.querySelector("#statusField"),
   serialNumber: document.querySelector("#serialField"),
   warrantyUntil: document.querySelector("#warrantyUntilField"),
-  deviceId: document.querySelector("#deviceIdField"),
   location: document.querySelector("#locationField"),
   owner: document.querySelector("#ownerField"),
   purchaseDate: document.querySelector("#purchaseDateField"),
   supportPhone: document.querySelector("#supportPhoneField"),
   supportEmail: document.querySelector("#supportEmailField"),
-  publicInfo: document.querySelector("#publicInfoField"),
+  notes: document.querySelector("#notesField"),
 };
 
 const assetList = document.querySelector("#assetList");
+const deviceSidebarTools = document.querySelector("#deviceSidebarTools");
 const assetForm = document.querySelector("#assetForm");
 const qrPreviewField = document.querySelector("#qrPreviewField");
 const qrCanvas = document.querySelector("#qrCanvas");
@@ -212,26 +210,28 @@ function normalizeConfig(value) {
 }
 
 function normalizeAssets(entries) {
-  return entries.map((asset) => ({
-    id: asset.id || newId(),
-    name: "",
-    inventoryNumber: "",
-    category: "Notebook",
-    status: "Auf Lager",
-    serialNumber: "",
-    warrantyUntil: "",
-    deviceId: asset.deviceId || asset.osAtDelivery || "",
-    location: "",
-    owner: "",
-    purchaseDate: "",
-    supportPhone: "",
-    supportEmail: "",
-    publicInfo: "",
-    lastScan: "",
-    customerId: asset.customerId || "default",
-    deletedAt: asset.deletedAt || "",
-    ...asset,
-  }));
+  return entries.map((entry) => {
+    const { deviceId, osAtDelivery, publicInfo, ...asset } = entry || {};
+    return {
+      id: asset.id || newId(),
+      name: "",
+      inventoryNumber: "",
+      category: "Notebook",
+      status: "Auf Lager",
+      serialNumber: "",
+      warrantyUntil: "",
+      location: "",
+      owner: "",
+      purchaseDate: "",
+      supportPhone: "",
+      supportEmail: "",
+      notes: "",
+      lastScan: "",
+      customerId: asset.customerId || "default",
+      deletedAt: asset.deletedAt || "",
+      ...asset,
+    };
+  });
 }
 
 function normalizeCustomers(entries) {
@@ -348,6 +348,7 @@ function renderNavigation() {
   Object.entries(sectionMap).forEach(([key, section]) => {
     section.hidden = key !== currentView;
   });
+  deviceSidebarTools.hidden = currentView !== "assets";
   document.querySelectorAll(".menu-item").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === currentView);
   });
@@ -356,7 +357,7 @@ function renderNavigation() {
 function renderNotice() {
   serverNotice.textContent = serverMode
     ? `Serverbetrieb aktiv. QR-Basis: ${publicBaseUrl()}`
-    : "Dateimodus aktiv. Fuer echte Handy-Scans bitte ueber den Server oeffnen.";
+    : "Dateimodus aktiv. Für echte Handy-Scans bitte über den Server öffnen.";
   serverNotice.className = serverMode ? "notice ok" : "notice warn";
 }
 
@@ -373,7 +374,7 @@ function renderList() {
 
   assetList.innerHTML = "";
   if (!listAssets.length) {
-    assetList.innerHTML = '<p class="empty">Keine Geraete gefunden.</p>';
+    assetList.innerHTML = '<p class="empty">Keine Geräte gefunden.</p>';
     return;
   }
 
@@ -446,7 +447,7 @@ function renderQr() {
 
   const payload = assetUrl(asset.id);
   qrPreviewField.value = payload;
-  qrWarning.textContent = serverMode ? "" : "Dieser Link funktioniert auf Handys erst, wenn die App ueber den Server erreichbar ist.";
+  qrWarning.textContent = serverMode ? "" : "Dieser Link funktioniert auf Handys erst, wenn die App über den Server erreichbar ist.";
   drawQr(qrCanvas, payload, 8);
 }
 
@@ -469,7 +470,7 @@ async function renderMobile(id) {
     mobileView.innerHTML = `
       <article class="mobile-card">
         <p class="kicker">Inventar</p>
-        <h1>Geraet nicht gefunden</h1>
+        <h1>Gerät nicht gefunden</h1>
         <p>Der QR-Code verweist auf keinen gespeicherten Eintrag.</p>
       </article>
     `;
@@ -478,20 +479,18 @@ async function renderMobile(id) {
 
   mobileView.innerHTML = `
     <article class="mobile-card">
-      <p class="kicker">Geraeteinformation</p>
+      <p class="kicker">Geräteinformation</p>
       <h1>${escapeHtml(asset.name || "Ohne Bezeichnung")}</h1>
       <p class="asset-number">${escapeHtml(asset.inventoryNumber || "Keine Inventarnummer")}</p>
       <span class="status ${statusClass(asset.status)}">${escapeHtml(asset.status || "Unbekannt")}</span>
-      <p class="public-note">${escapeHtml(asset.publicInfo || defaultPublicInfo(asset))}</p>
       <div class="mobile-actions">
         ${contactLink("tel", asset.supportPhone, "Anrufen")}
         ${contactLink("mailto", asset.supportEmail, "E-Mail")}
       </div>
       <div class="info-grid">
-        ${infoRow("Geraetename", asset.name)}
+        ${infoRow("Gerätename", asset.name)}
         ${infoRow("Seriennummer", asset.serialNumber)}
         ${infoRow("Garantie bis", formatDate(asset.warrantyUntil))}
-        ${infoRow("ID", asset.deviceId || asset.inventoryNumber)}
         ${infoRow("Standort", asset.location)}
         ${infoRow("Kategorie", asset.category)}
         ${infoRow("Support", supportText(asset))}
@@ -507,9 +506,8 @@ function createAsset() {
   const asset = normalizeAssets([
     {
       id: newId(),
-      name: "Neues Geraet",
+      name: "Neues Gerät",
       inventoryNumber: `INV-${nextNumber}`,
-      deviceId: `ID-${nextNumber}`,
       customerId: selectedCustomerId === "all" ? customers[0]?.id || "default" : selectedCustomerId,
     },
   ])[0];
@@ -533,72 +531,158 @@ function deleteSelectedAsset() {
 
 function printLabels() {
   labelSheet.innerHTML = "";
-  visibleAssets().forEach((asset) => {
+  const asset = getSelectedAsset();
+  if (!asset) return;
+  [asset].forEach((entry) => {
     const label = document.createElement("article");
     label.className = "print-label";
     const canvas = document.createElement("canvas");
     const text = document.createElement("div");
     text.innerHTML = `
-      <strong>${escapeHtml(asset.name || "Ohne Bezeichnung")}</strong>
-      <span>${escapeHtml(asset.inventoryNumber || "-")}</span>
-      <span>${escapeHtml(asset.deviceId || "")}</span>
+      <strong>${escapeHtml(entry.name || "Ohne Bezeichnung")}</strong>
+      <span>${escapeHtml(entry.inventoryNumber || "-")}</span>
+      <span>${escapeHtml(entry.serialNumber || "")}</span>
     `;
     label.append(canvas, text);
     labelSheet.appendChild(label);
-    drawQr(canvas, assetUrl(asset.id), 6);
+    drawQr(canvas, assetUrl(entry.id), 6);
   });
   window.print();
 }
 
 function renderAdminLists() {
-  customerAdminList.innerHTML = customers
-    .map(
-      (customer) => `
-        <div class="admin-row" data-customer-id="${escapeHtml(customer.id)}">
-          <input class="customer-name" value="${escapeHtml(customer.name)}" />
-          <input class="customer-notes" value="${escapeHtml(customer.notes)}" placeholder="Notiz" />
-          <button type="button" class="secondary save-customer">Speichern</button>
-        </div>`
-    )
-    .join("");
-  customerAdminList.querySelectorAll(".save-customer").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const row = button.closest(".admin-row");
-      const customer = customers.find((entry) => entry.id === row.dataset.customerId);
-      customer.name = row.querySelector(".customer-name").value.trim();
-      customer.notes = row.querySelector(".customer-notes").value.trim();
-      await saveCustomers();
-      render();
+  if (!selectedCustomerAdminId || !customers.some((customer) => customer.id === selectedCustomerAdminId)) {
+    selectedCustomerAdminId = customers[0]?.id || null;
+  }
+  if (!selectedUserAdminName || !users.some((user) => user.username === selectedUserAdminName)) {
+    selectedUserAdminName = users[0]?.username || null;
+  }
+
+  const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerAdminId);
+  customerAdminList.innerHTML = `
+    <div class="admin-split">
+      <div class="admin-picker">
+        ${customers
+          .map(
+            (customer) => `
+              <button type="button" class="admin-pick ${customer.id === selectedCustomerAdminId ? "active" : ""}" data-customer-id="${escapeHtml(
+                customer.id
+              )}">
+                <strong>${escapeHtml(customer.name)}</strong>
+                <span>${escapeHtml(customer.notes || "Keine Notiz")}</span>
+              </button>`
+          )
+          .join("")}
+      </div>
+      ${
+        selectedCustomer
+          ? `<form class="admin-detail" data-customer-id="${escapeHtml(selectedCustomer.id)}">
+              <label>
+                Kundenname
+                <input class="customer-name" value="${escapeHtml(selectedCustomer.name)}" />
+              </label>
+              <label>
+                Notiz
+                <textarea class="customer-notes" rows="4" placeholder="Interne Kundeninfos">${escapeHtml(selectedCustomer.notes)}</textarea>
+              </label>
+              <div class="form-actions">
+                <button type="submit" class="primary">Speichern</button>
+              </div>
+            </form>`
+          : '<p class="empty">Noch kein Kunde angelegt.</p>'
+      }
+    </div>`;
+  customerAdminList.querySelectorAll(".admin-pick").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedCustomerAdminId = button.dataset.customerId;
+      renderAdminLists();
     });
   });
+  customerAdminList.querySelector(".admin-detail")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const customer = customers.find((entry) => entry.id === event.currentTarget.dataset.customerId);
+    customer.name = event.currentTarget.querySelector(".customer-name").value.trim();
+    customer.notes = event.currentTarget.querySelector(".customer-notes").value.trim();
+    await saveCustomers();
+    render();
+  });
 
-  userAdminList.innerHTML = users
-    .map(
-      (user) => `
-        <div class="admin-row" data-username="${escapeHtml(user.username)}">
-          <input class="user-name" value="${escapeHtml(user.username)}" />
-          <select class="user-role">
-            <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin</option>
-            <option value="technician" ${user.role === "technician" ? "selected" : ""}>Techniker</option>
-            <option value="readonly" ${user.role === "readonly" ? "selected" : ""}>Nur Lesen</option>
-          </select>
-          <input class="user-password" type="password" placeholder="Neues Passwort optional" />
-          <button type="button" class="secondary save-user">Speichern</button>
-        </div>`
-    )
-    .join("");
-  userAdminList.querySelectorAll(".save-user").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const row = button.closest(".admin-row");
-      const user = users.find((entry) => entry.username === row.dataset.username);
-      user.username = row.querySelector(".user-name").value.trim();
-      user.role = row.querySelector(".user-role").value;
-      const password = row.querySelector(".user-password").value;
-      if (password) user.password = password;
-      await saveUsers();
-      users.forEach((entry) => delete entry.password);
-      render();
+  const selectedUser = users.find((user) => user.username === selectedUserAdminName);
+  userAdminList.innerHTML = `
+    <div class="admin-split">
+      <div class="admin-picker">
+        ${users
+          .map(
+            (user) => `
+              <button type="button" class="admin-pick ${user.username === selectedUserAdminName ? "active" : ""}" data-username="${escapeHtml(
+                user.username
+              )}">
+                <strong>${escapeHtml(user.username)}</strong>
+                <span>${escapeHtml(roleLabel(user.role))}</span>
+              </button>`
+          )
+          .join("")}
+      </div>
+      ${
+        selectedUser
+          ? `<form class="admin-detail" data-username="${escapeHtml(selectedUser.username)}">
+              <label>
+                Benutzername
+                <input class="user-name" value="${escapeHtml(selectedUser.username)}" />
+              </label>
+              <label>
+                Rolle
+                <select class="user-role">
+                  <option value="admin" ${selectedUser.role === "admin" ? "selected" : ""}>Admin</option>
+                  <option value="technician" ${selectedUser.role === "technician" ? "selected" : ""}>Techniker</option>
+                  <option value="readonly" ${selectedUser.role === "readonly" ? "selected" : ""}>Nur Lesen</option>
+                </select>
+              </label>
+              <label>
+                Neues Passwort
+                <input class="user-password" type="password" placeholder="Optional" />
+              </label>
+              <div class="form-actions">
+                <button type="button" class="danger delete-user">Löschen</button>
+                <button type="submit" class="primary">Speichern</button>
+              </div>
+            </form>`
+          : '<p class="empty">Noch kein Benutzer angelegt.</p>'
+      }
+    </div>`;
+  userAdminList.querySelectorAll(".admin-pick").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedUserAdminName = button.dataset.username;
+      renderAdminLists();
     });
+  });
+  userAdminList.querySelector(".admin-detail")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const user = users.find((entry) => entry.username === event.currentTarget.dataset.username);
+    const nextUsername = event.currentTarget.querySelector(".user-name").value.trim();
+    if (!nextUsername) return;
+    user.username = nextUsername;
+    user.role = event.currentTarget.querySelector(".user-role").value;
+    const password = event.currentTarget.querySelector(".user-password").value;
+    if (password) user.password = password;
+    selectedUserAdminName = nextUsername;
+    await saveUsers();
+    users.forEach((entry) => delete entry.password);
+    render();
+  });
+  userAdminList.querySelector(".delete-user")?.addEventListener("click", async (event) => {
+    const username = event.currentTarget.closest(".admin-detail").dataset.username;
+    const user = users.find((entry) => entry.username === username);
+    if (!user) return;
+    if (user.role === "admin" && users.filter((entry) => entry.role === "admin").length === 1) {
+      alert("Der letzte Admin kann nicht gelöscht werden.");
+      return;
+    }
+    if (!confirm(`Benutzer "${username}" löschen?`)) return;
+    users = users.filter((entry) => entry.username !== username);
+    selectedUserAdminName = users[0]?.username || null;
+    await saveUsers();
+    render();
   });
 
   trashList.innerHTML = deletedAssets().length
@@ -610,7 +694,7 @@ function renderAdminLists() {
               <span>${escapeHtml(asset.inventoryNumber || "")}</span>
               <span>${escapeHtml(formatDateTime(asset.deletedAt))}</span>
               <button type="button" class="secondary restore-asset">Wiederherstellen</button>
-              <button type="button" class="danger purge-asset">Endgueltig loeschen</button>
+              <button type="button" class="danger purge-asset">Endgültig löschen</button>
             </div>`
         )
         .join("")
@@ -626,7 +710,7 @@ function renderAdminLists() {
   trashList.querySelectorAll(".purge-asset").forEach((button) => {
     button.addEventListener("click", async () => {
       const id = button.closest(".admin-row").dataset.assetId;
-      if (!confirm("Eintrag endgueltig loeschen?")) return;
+      if (!confirm("Eintrag endgültig löschen?")) return;
       assets = assets.filter((entry) => entry.id !== id);
       await saveAssets();
       render();
@@ -635,13 +719,17 @@ function renderAdminLists() {
 }
 
 function addCustomer() {
-  customers.push({ id: newId(), name: "Neuer Kunde", notes: "" });
+  const customer = { id: newId(), name: "Neuer Kunde", notes: "" };
+  customers.push(customer);
+  selectedCustomerAdminId = customer.id;
   saveCustomers();
   render();
 }
 
 function addUser() {
-  users.push({ username: `user${users.length + 1}`, role: "technician", password: "BitteAendern123" });
+  const user = { username: `user${users.length + 1}`, role: "technician", password: "BitteAendern123" };
+  users.push(user);
+  selectedUserAdminName = user.username;
   saveUsers();
   users.forEach((entry) => delete entry.password);
   render();
@@ -663,7 +751,7 @@ function importBackup(event) {
   reader.onload = async () => {
     try {
       const payload = JSON.parse(reader.result);
-      if (!Array.isArray(payload.assets)) throw new Error("Ungueltiges Backup");
+      if (!Array.isArray(payload.assets)) throw new Error("Ungültiges Backup");
       assets = normalizeAssets(payload.assets);
       config = normalizeConfig(payload.config || config);
       selectedId = assets[0]?.id || null;
@@ -708,7 +796,7 @@ async function runUpdate() {
     updateStatus.textContent = "Updates funktionieren nur im Serverbetrieb.";
     return;
   }
-  updateStatus.textContent = "Update laeuft...";
+  updateStatus.textContent = "Update läuft...";
   try {
     const response = await fetch("/api/update", { method: "POST" });
     const result = await response.json();
@@ -730,11 +818,11 @@ async function changePassword() {
     body: JSON.stringify({ password }),
   });
   if (!response.ok) {
-    updateStatus.textContent = "Passwort konnte nicht geaendert werden.";
+    updateStatus.textContent = "Passwort konnte nicht geändert werden.";
     return;
   }
   newPasswordField.value = "";
-  updateStatus.textContent = "Passwort geaendert.";
+  updateStatus.textContent = "Passwort geändert.";
 }
 
 async function createBackupNow() {
@@ -810,6 +898,12 @@ function statusClass(status) {
   return "ok";
 }
 
+function roleLabel(role) {
+  if (role === "admin") return "Admin";
+  if (role === "readonly") return "Nur Lesen";
+  return "Techniker";
+}
+
 function infoRow(label, value) {
   return `
     <div class="info-row">
@@ -827,10 +921,6 @@ function contactLink(type, value, label) {
 
 function supportText(asset) {
   return [asset.supportPhone, asset.supportEmail].filter(Boolean).join(" - ");
-}
-
-function defaultPublicInfo(asset) {
-  return `Bitte nennen Sie bei Rueckfragen die ID ${asset.deviceId || asset.inventoryNumber || ""}.`.trim();
 }
 
 function formatDate(value) {

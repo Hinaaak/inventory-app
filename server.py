@@ -1,4 +1,4 @@
-from http import cookies
+﻿from http import cookies
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -357,13 +357,11 @@ def normalize_asset(asset):
         "status": asset.get("status") or "Auf Lager",
         "serialNumber": asset.get("serialNumber") or "",
         "warrantyUntil": asset.get("warrantyUntil") or "",
-        "deviceId": asset.get("deviceId") or asset.get("osAtDelivery") or "",
         "location": asset.get("location") or "",
         "owner": asset.get("owner") or "",
         "purchaseDate": asset.get("purchaseDate") or "",
         "supportPhone": asset.get("supportPhone") or "",
         "supportEmail": asset.get("supportEmail") or "",
-        "publicInfo": asset.get("publicInfo") or "",
         "notes": asset.get("notes") or "",
         "lastScan": asset.get("lastScan") or "",
         "customerId": asset.get("customerId") or "",
@@ -378,12 +376,11 @@ def public_asset(asset):
         "inventoryNumber": asset.get("inventoryNumber", ""),
         "serialNumber": asset.get("serialNumber", ""),
         "warrantyUntil": asset.get("warrantyUntil", ""),
-        "deviceId": asset.get("deviceId", ""),
+        "location": asset.get("location", ""),
         "category": asset.get("category", ""),
         "status": asset.get("status", ""),
         "supportPhone": asset.get("supportPhone", ""),
         "supportEmail": asset.get("supportEmail", ""),
-        "publicInfo": asset.get("publicInfo", ""),
     }
 
 
@@ -443,7 +440,7 @@ def ensure_auth():
     write_json(AUTH_FILE, auth)
     write_json(USERS_FILE, [auth])
     INITIAL_PASSWORD_FILE.write_text(
-        f"Benutzer: admin\nPasswort: {password}\n\nBitte nach dem ersten Login sicher ablegen und Datei loeschen.\n",
+        f"Benutzer: admin\nPasswort: {password}\n\nBitte nach dem ersten Login sicher ablegen und Datei löschen.\n",
         encoding="utf-8",
     )
 
@@ -648,7 +645,7 @@ if __name__ == "__main__":
     threading.Thread(target=backup_worker, daemon=True).start()
 
     print("")
-    print("Inventar QR laeuft.")
+    print("Inventar QR läuft.")
     print(f"Auf diesem Server: http://localhost:{PORT}/")
     print(f"Im gleichen Netz: http://{ip}:{PORT}/")
     if INITIAL_PASSWORD_FILE.exists():
