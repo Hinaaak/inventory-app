@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Inventar QR</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="kicker">Inventarisierung</p>
+        <h1>Inventar QR</h1>
+        <p id="serverNotice" class="notice"></p>
+      </div>
+      <div class="top-actions">
+        <button id="printLabelsBtn" class="icon-button" title="QR-Etiketten drucken" aria-label="QR-Etiketten drucken">⎙</button>
+        <button id="exportBtn" class="secondary">Export</button>
+        <label class="secondary import-button">
+          Import
+          <input id="importInput" type="file" accept="application/json" />
+        </label>
+        <button id="logoutBtn" class="secondary" type="button">Abmelden</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="loginView" class="login-view" hidden>
+        <form id="loginForm" class="login-panel">
+          <p class="kicker">Admin</p>
+          <h2>Anmelden</h2>
+          <label>
+            Benutzer
+            <input id="usernameField" autocomplete="username" value="admin" />
+          </label>
+          <label>
+            Passwort
+            <input id="passwordField" type="password" autocomplete="current-password" />
+          </label>
+          <p id="loginError" class="warning-text"></p>
+          <button type="submit" class="primary">Anmelden</button>
+          <p class="hint">Beim ersten Serverstart steht das initiale Passwort in data/initial-admin-password.txt.</p>
+        </form>
+      </section>
+
+      <section id="appView" class="workspace">
+        <aside class="sidebar">
+          <div class="toolbar">
+            <div class="search">
+              <span>⌕</span>
+              <input id="searchInput" type="search" placeholder="Suchen" />
+            </div>
+            <button id="newAssetBtn" class="primary">Neu</button>
+          </div>
+
+          <div class="stats">
+            <div>
+              <span id="assetCount">0</span>
+              <small>Geräte</small>
+            </div>
+            <div>
+              <span id="openCount">0</span>
+              <small>Offen</small>
+            </div>
+            <div>
+              <span id="serviceCount">0</span>
+              <small>Service</small>
+            </div>
+          </div>
+
+          <div id="assetList" class="asset-list" aria-label="Inventarliste"></div>
+        </aside>
+
+        <section class="detail">
+          <form id="assetForm" class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">Gerät</p>
+                <h2 id="formTitle">Neuer Eintrag</h2>
+              </div>
+              <div class="form-actions">
+                <button id="deleteBtn" type="button" class="danger">Löschen</button>
+                <button type="submit" class="primary">Speichern</button>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <label>
+                Bezeichnung
+                <input id="nameField" name="name" required placeholder="z. B. ThinkPad T14" />
+              </label>
+              <label>
+                Inventarnummer
+                <input id="inventoryField" name="inventoryNumber" required placeholder="INV-0001" />
+              </label>
+              <label>
+                Kategorie
+                <select id="categoryField" name="category">
+                  <option>Notebook</option>
+                  <option>Monitor</option>
+                  <option>Drucker</option>
+                  <option>Telefon</option>
+                  <option>Netzwerk</option>
+                  <option>Zubehör</option>
+                  <option>Sonstiges</option>
+                </select>
+              </label>
+              <label>
+                Status
+                <select id="statusField" name="status">
+                  <option>In Betrieb</option>
+                  <option>Auf Lager</option>
+                  <option>Service</option>
+                  <option>Ausgegeben</option>
+                  <option>Ausgemustert</option>
+                </select>
+              </label>
+              <label>
+                Seriennummer
+                <input id="serialField" name="serialNumber" placeholder="Seriennummer" />
+              </label>
+              <label>
+                Garantie bis
+                <input id="warrantyUntilField" name="warrantyUntil" type="date" />
+              </label>
+              <label>
+                ID
+                <input id="deviceIdField" name="deviceId" placeholder="z. B. Kundengeraet 4711" />
+              </label>
+              <label>
+                Standort
+                <input id="locationField" name="location" placeholder="Büro, Raum, Regal" />
+              </label>
+              <label>
+                Zuständig
+                <input id="ownerField" name="owner" placeholder="Person oder Team" />
+              </label>
+              <label>
+                Kaufdatum
+                <input id="purchaseDateField" name="purchaseDate" type="date" />
+              </label>
+              <label>
+                Support Telefon
+                <input id="supportPhoneField" name="supportPhone" placeholder="+49 123 456789" />
+              </label>
+              <label>
+                Support E-Mail
+                <input id="supportEmailField" name="supportEmail" type="email" placeholder="support@firma.de" />
+              </label>
+            </div>
+
+            <label>
+              Hinweis auf der QR-Seite
+              <textarea id="publicInfoField" name="publicInfo" rows="3" placeholder="Kurzer Hinweis für Kunden oder Techniker"></textarea>
+            </label>
+
+            <label>
+              Interne Notizen
+              <textarea id="notesField" name="notes" rows="4" placeholder="Nicht öffentlich: Zubehör, Zustand, interne Hinweise"></textarea>
+            </label>
+
+            <div class="qr-area">
+              <div>
+                <label>
+                  QR-Link
+                  <textarea id="qrPreviewField" rows="6" readonly></textarea>
+                </label>
+                <p class="hint">Der QR-Code oeffnet die Geraeteseite im Browser. Die Adresse muss fuer Handys erreichbar sein, z. B. ueber VPN, Tailscale oder einen Tunnel.</p>
+                <p id="qrWarning" class="warning-text"></p>
+              </div>
+              <div class="qr-card">
+                <canvas id="qrCanvas" width="180" height="180" aria-label="QR-Code"></canvas>
+                <button id="copyLinkBtn" type="button" class="secondary">Link kopieren</button>
+              </div>
+            </div>
+          </form>
+
+          <section class="panel settings-panel">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">Betrieb</p>
+                <h2>Erreichbarkeit und Backups</h2>
+              </div>
+              <button id="saveSettingsBtn" type="button" class="primary">Speichern</button>
+            </div>
+
+            <div class="form-grid">
+              <label>
+                Oeffentliche Basisadresse
+                <input id="baseUrlField" type="url" placeholder="https://inventar.example/" />
+              </label>
+              <label>
+                Lokales Backup-Ziel
+                <input id="backupPathField" placeholder="/var/backups/inventar-qr" />
+              </label>
+              <label>
+                Backups behalten
+                <input id="backupKeepField" type="number" min="1" step="1" />
+              </label>
+              <label class="check-row">
+                <input id="backupEnabledField" type="checkbox" />
+                Automatische Backups aktiv
+              </label>
+              <label>
+                Backup-Intervall in Stunden
+                <input id="backupIntervalField" type="number" min="1" step="1" />
+              </label>
+              <label>
+                Neues Admin-Passwort
+                <input id="newPasswordField" type="password" autocomplete="new-password" placeholder="mindestens 10 Zeichen" />
+              </label>
+            </div>
+
+            <div class="backup-actions">
+              <button id="createBackupBtn" type="button" class="secondary">Backup jetzt erstellen</button>
+              <button id="updateBtn" type="button" class="secondary">Update aus GitHub</button>
+              <button id="changePasswordBtn" type="button" class="secondary">Passwort aendern</button>
+            </div>
+            <p id="updateStatus" class="hint"></p>
+            <div id="backupList" class="backup-list"></div>
+          </section>
+        </section>
+      </section>
+
+      <section id="mobileView" class="mobile-view" hidden></section>
+      <section id="labelSheet" class="label-sheet" aria-label="QR-Etiketten"></section>
+    </main>
+
+    <script src="vendor/qrcode.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

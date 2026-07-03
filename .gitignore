@@ -1,0 +1,13 @@
+.git/
+.git-local/
+.pnpm-store/
+node_modules/
+__pycache__/
+*.pyc
+
+data/*
+!data/.gitkeep
+test-backups/
+.local-ssh/
+
+*.log

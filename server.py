@@ -1,0 +1,511 @@
+from http import cookies
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import socket
+import sqlite3
+import subprocess
+import threading
+import time
+
+
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = ROOT / "data"
+ASSETS_FILE = DATA_DIR / "assets.json"
+CONFIG_FILE = DATA_DIR / "config.json"
+AUTH_FILE = DATA_DIR / "auth.json"
+INITIAL_PASSWORD_FILE = DATA_DIR / "initial-admin-password.txt"
+DB_FILE = DATA_DIR / "inventory.sqlite"
+PORT = 8123
+
+DEFAULT_CONFIG = {
+    "baseUrl": "",
+    "backupEnabled": True,
+    "backupIntervalHours": 24,
+    "backupKeepLast": 14,
+    "backupPath": "",
+}
+
+SESSIONS = {}
+
+
+class InventoryHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+
+        if parsed.path == "/api/session":
+            self.send_json({"authenticated": self.is_authenticated()})
+            return
+
+        if parsed.path.startswith("/api/public/assets/"):
+            asset_id = parsed.path.rsplit("/", 1)[-1]
+            asset = get_asset(asset_id)
+            if not asset:
+                self.send_error(404)
+                return
+            self.send_json(public_asset(asset))
+            return
+
+        if parsed.path == "/api/state":
+            if not self.require_auth():
+                return
+            self.send_json({"assets": load_assets(), "config": load_config()})
+            return
+
+        if parsed.path == "/api/backups":
+            if not self.require_auth():
+                return
+            self.send_json(list_backups())
+            return
+
+        if parsed.path == "/api/backups/download":
+            if not self.require_auth():
+                return
+            self.download_backup(parsed.query)
+            return
+
+        return super().do_GET()
+
+    def do_POST(self):
+        if self.path == "/api/login":
+            payload = self.read_json_body()
+            if not isinstance(payload, dict) or not verify_login(payload.get("username"), payload.get("password")):
+                self.send_json({"ok": False, "message": "Login fehlgeschlagen."}, status=401)
+                return
+            token = create_session(payload.get("username"))
+            self.send_json({"ok": True}, headers=[("Set-Cookie", session_cookie(token))])
+            return
+
+        if self.path == "/api/logout":
+            token = self.session_token()
+            if token:
+                SESSIONS.pop(token, None)
+            self.send_json({"ok": True}, headers=[("Set-Cookie", "inventar_session=; Path=/; Max-Age=0; SameSite=Lax")])
+            return
+
+        if not self.require_auth():
+            return
+
+        if self.path == "/api/assets":
+            payload = self.read_json_body()
+            if not isinstance(payload, list):
+                self.send_error(400, "Expected asset list")
+                return
+            save_assets(payload)
+            self.send_json({"ok": True})
+            return
+
+        if self.path == "/api/config":
+            payload = self.read_json_body()
+            if not isinstance(payload, dict):
+                self.send_error(400, "Expected config object")
+                return
+            write_json(CONFIG_FILE, normalize_config(payload))
+            self.send_json({"ok": True})
+            return
+
+        if self.path == "/api/password":
+            payload = self.read_json_body()
+            password = payload.get("password") if isinstance(payload, dict) else ""
+            if not isinstance(password, str) or len(password) < 10:
+                self.send_json({"ok": False, "message": "Passwort muss mindestens 10 Zeichen haben."}, status=400)
+                return
+            write_json(AUTH_FILE, make_auth_record("admin", password))
+            INITIAL_PASSWORD_FILE.unlink(missing_ok=True)
+            self.send_json({"ok": True})
+            return
+
+        if self.path == "/api/backups/create":
+            backup = create_backup("manual")
+            self.send_json({"ok": True, "backup": backup.name})
+            return
+
+        if self.path == "/api/backups/import":
+            payload = self.read_json_body()
+            if not isinstance(payload, dict) or not isinstance(payload.get("assets"), list):
+                self.send_error(400, "Expected backup object")
+                return
+            create_backup("before-import")
+            save_assets(payload["assets"])
+            write_json(CONFIG_FILE, normalize_config(payload.get("config", load_config())))
+            self.send_json({"ok": True})
+            return
+
+        if self.path == "/api/update":
+            self.send_json(run_update())
+            return
+
+        self.send_error(404)
+
+    def read_json_body(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        try:
+            return json.loads(body.decode("utf-8"))
+        except Exception:
+            return None
+
+    def send_json(self, payload, status=200, headers=None):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        for key, value in headers or []:
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def require_auth(self):
+        if self.is_authenticated():
+            return True
+        self.send_json({"ok": False, "message": "Nicht angemeldet."}, status=401)
+        return False
+
+    def is_authenticated(self):
+        token = self.session_token()
+        if not token:
+            return False
+        session = SESSIONS.get(token)
+        if not session:
+            return False
+        if session["expires"] < time.time():
+            SESSIONS.pop(token, None)
+            return False
+        session["expires"] = time.time() + 12 * 60 * 60
+        return True
+
+    def session_token(self):
+        header = self.headers.get("Cookie")
+        if not header:
+            return ""
+        jar = cookies.SimpleCookie()
+        jar.load(header)
+        morsel = jar.get("inventar_session")
+        return morsel.value if morsel else ""
+
+    def download_backup(self, query):
+        params = parse_qs(query)
+        name = params.get("file", [""])[0]
+        backup_dir = get_backup_dir()
+        path = (backup_dir / name).resolve()
+        if not str(path).startswith(str(backup_dir.resolve())) or not path.exists():
+            self.send_error(404)
+            return
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def ensure_data():
+    DATA_DIR.mkdir(exist_ok=True)
+    init_db()
+    get_backup_dir().mkdir(parents=True, exist_ok=True)
+    if not CONFIG_FILE.exists():
+        config = dict(DEFAULT_CONFIG)
+        config["baseUrl"] = f"http://{local_ip()}:{PORT}/"
+        write_json(CONFIG_FILE, config)
+    ensure_auth()
+    migrate_assets_json()
+
+
+def init_db():
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assets (
+                id TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+
+
+def migrate_assets_json():
+    if not ASSETS_FILE.exists():
+        return
+    if load_assets():
+        return
+    payload = read_json(ASSETS_FILE, [])
+    if isinstance(payload, list) and payload:
+        save_assets(payload)
+
+
+def load_assets():
+    with sqlite3.connect(DB_FILE) as conn:
+        rows = conn.execute("SELECT payload FROM assets ORDER BY updated_at DESC").fetchall()
+    assets = []
+    for (payload,) in rows:
+        try:
+            assets.append(json.loads(payload))
+        except Exception:
+            continue
+    return assets
+
+
+def get_asset(asset_id):
+    with sqlite3.connect(DB_FILE) as conn:
+        row = conn.execute("SELECT payload FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except Exception:
+        return None
+
+
+def save_assets(assets):
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    normalized = [normalize_asset(asset) for asset in assets]
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.execute("DELETE FROM assets")
+        conn.executemany(
+            "INSERT INTO assets (id, payload, updated_at) VALUES (?, ?, ?)",
+            [(asset["id"], json.dumps(asset, ensure_ascii=False), now) for asset in normalized],
+        )
+        conn.commit()
+    write_json(ASSETS_FILE, normalized)
+
+
+def normalize_asset(asset):
+    if not isinstance(asset, dict):
+        asset = {}
+    return {
+        "id": asset.get("id") or secrets.token_hex(4),
+        "name": asset.get("name") or "",
+        "inventoryNumber": asset.get("inventoryNumber") or "",
+        "category": asset.get("category") or "Notebook",
+        "status": asset.get("status") or "Auf Lager",
+        "serialNumber": asset.get("serialNumber") or "",
+        "warrantyUntil": asset.get("warrantyUntil") or "",
+        "deviceId": asset.get("deviceId") or asset.get("osAtDelivery") or "",
+        "location": asset.get("location") or "",
+        "owner": asset.get("owner") or "",
+        "purchaseDate": asset.get("purchaseDate") or "",
+        "supportPhone": asset.get("supportPhone") or "",
+        "supportEmail": asset.get("supportEmail") or "",
+        "publicInfo": asset.get("publicInfo") or "",
+        "notes": asset.get("notes") or "",
+        "lastScan": asset.get("lastScan") or "",
+    }
+
+
+def public_asset(asset):
+    return {
+        "id": asset.get("id", ""),
+        "name": asset.get("name", ""),
+        "inventoryNumber": asset.get("inventoryNumber", ""),
+        "serialNumber": asset.get("serialNumber", ""),
+        "warrantyUntil": asset.get("warrantyUntil", ""),
+        "deviceId": asset.get("deviceId", ""),
+        "category": asset.get("category", ""),
+        "status": asset.get("status", ""),
+        "supportPhone": asset.get("supportPhone", ""),
+        "supportEmail": asset.get("supportEmail", ""),
+        "publicInfo": asset.get("publicInfo", ""),
+    }
+
+
+def load_config():
+    return normalize_config(read_json(CONFIG_FILE, DEFAULT_CONFIG))
+
+
+def normalize_config(config):
+    merged = dict(DEFAULT_CONFIG)
+    if isinstance(config, dict):
+        merged.update(config)
+    merged["backupEnabled"] = bool(merged.get("backupEnabled"))
+    merged["backupIntervalHours"] = max(1, int(merged.get("backupIntervalHours") or 24))
+    merged["backupKeepLast"] = max(1, int(merged.get("backupKeepLast") or 14))
+    merged["backupPath"] = str(merged.get("backupPath") or "")
+    if not merged.get("baseUrl"):
+        merged["baseUrl"] = f"http://{local_ip()}:{PORT}/"
+    return merged
+
+
+def get_backup_dir():
+    config_path = ""
+    if CONFIG_FILE.exists():
+        try:
+            config_path = str(read_json(CONFIG_FILE, {}).get("backupPath") or "")
+        except Exception:
+            config_path = ""
+    if config_path:
+        return Path(config_path).expanduser().resolve()
+    return (DATA_DIR / "backups").resolve()
+
+
+def read_json(path, fallback):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return fallback
+
+
+def write_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def ensure_auth():
+    if AUTH_FILE.exists():
+        return
+    password = secrets.token_urlsafe(12)
+    auth = make_auth_record("admin", password)
+    write_json(AUTH_FILE, auth)
+    INITIAL_PASSWORD_FILE.write_text(
+        f"Benutzer: admin\nPasswort: {password}\n\nBitte nach dem ersten Login sicher ablegen und Datei loeschen.\n",
+        encoding="utf-8",
+    )
+
+
+def make_auth_record(username, password):
+    salt = secrets.token_bytes(16)
+    digest = hash_password(password, salt)
+    return {
+        "username": username,
+        "salt": base64.b64encode(salt).decode("ascii"),
+        "passwordHash": base64.b64encode(digest).decode("ascii"),
+    }
+
+
+def hash_password(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8"), salt, 200_000)
+
+
+def verify_login(username, password):
+    auth = read_json(AUTH_FILE, {})
+    if username != auth.get("username") or not password:
+        return False
+    try:
+        salt = base64.b64decode(auth["salt"])
+        expected = base64.b64decode(auth["passwordHash"])
+    except Exception:
+        return False
+    return hmac.compare_digest(hash_password(password, salt), expected)
+
+
+def create_session(username):
+    token = secrets.token_urlsafe(32)
+    SESSIONS[token] = {"username": username, "expires": time.time() + 12 * 60 * 60}
+    return token
+
+
+def session_cookie(token):
+    return f"inventar_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={12 * 60 * 60}"
+
+
+def create_backup(reason):
+    ensure_data()
+    payload = {
+        "version": 2,
+        "reason": reason,
+        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "assets": load_assets(),
+        "config": load_config(),
+    }
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup_dir = get_backup_dir()
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    path = backup_dir / f"inventar-{reason}-{stamp}.json"
+    write_json(path, payload)
+    prune_backups(load_config()["backupKeepLast"])
+    return path
+
+
+def list_backups():
+    ensure_data()
+    backups = []
+    for path in sorted(get_backup_dir().glob("*.json"), reverse=True):
+        backups.append({"name": path.name, "size": max(1, round(path.stat().st_size / 1024))})
+    return backups
+
+
+def prune_backups(keep_last):
+    backups = sorted(get_backup_dir().glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for path in backups[keep_last:]:
+        path.unlink(missing_ok=True)
+
+
+def run_update():
+    if not (ROOT / ".git").exists():
+        return {"ok": False, "message": "Dieses Verzeichnis ist kein Git-Checkout."}
+    try:
+        result = subprocess.run(
+            ["git", "pull", "--ff-only"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=120,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "message": "Git ist auf diesem System nicht installiert."}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "message": "Update hat zu lange gedauert."}
+
+    return {
+        "ok": result.returncode == 0,
+        "message": (result.stdout + result.stderr).strip() or "Keine Ausgabe.",
+    }
+
+
+def backup_worker():
+    last_backup = 0
+    while True:
+        time.sleep(60)
+        config = load_config()
+        if not config["backupEnabled"]:
+            continue
+        interval = config["backupIntervalHours"] * 60 * 60
+        if time.time() - last_backup >= interval:
+            create_backup("auto")
+            last_backup = time.time()
+
+
+def local_ip():
+    try:
+        for result in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = result[4][0]
+            if not ip.startswith("127."):
+                return ip
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
+if __name__ == "__main__":
+    ensure_data()
+    ip = local_ip()
+
+    threading.Thread(target=backup_worker, daemon=True).start()
+
+    print("")
+    print("Inventar QR laeuft.")
+    print(f"Auf diesem Server: http://localhost:{PORT}/")
+    print(f"Im gleichen Netz: http://{ip}:{PORT}/")
+    if INITIAL_PASSWORD_FILE.exists():
+        print(f"Initiales Admin-Passwort: {INITIAL_PASSWORD_FILE}")
+    print("")
+    print("Ohne oeffentliche IP: nutze VPN, Tailscale oder Cloudflare Tunnel und trage diese Adresse als Basisadresse ein.")
+    print("Fenster offen lassen. Zum Beenden Strg+C druecken.")
+    print("")
+
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), InventoryHandler)
+    server.serve_forever()
