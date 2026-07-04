@@ -9,6 +9,8 @@ Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 - Mobilansicht für QR-Codes auf reine Geräteinformationen reduziert.
 - Kopfzeile mit Drucken, Export und Import in der Mobilansicht ausgeblendet.
 - README überarbeitet und Installationsanleitung für Ubuntu 24.04 ergänzt.
+- Security-Härtung begonnen: interne Dateien vor Webzugriff geschützt, Security-Header ergänzt, Rollen serverseitig geprüft, Login-Rate-Limit eingebaut und QR-IDs auf lange Tokens umgestellt.
+- Update-Funktion auf Admins beschränkt und Update-Ergebnisse in `data/audit.log` protokolliert.
 
 ## 2026-07-03
 

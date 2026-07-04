@@ -23,7 +23,18 @@ USERS_FILE = DATA_DIR / "users.json"
 CUSTOMERS_FILE = DATA_DIR / "customers.json"
 INITIAL_PASSWORD_FILE = DATA_DIR / "initial-admin-password.txt"
 DB_FILE = DATA_DIR / "inventory.sqlite"
+AUDIT_FILE = DATA_DIR / "audit.log"
 PORT = 8123
+SESSION_SECONDS = 12 * 60 * 60
+LOGIN_WINDOW_SECONDS = 10 * 60
+LOGIN_MAX_ATTEMPTS = 5
+SAFE_STATIC_FILES = {
+    "/",
+    "/index.html",
+    "/app.js",
+    "/styles.css",
+    "/vendor/qrcode.js",
+}
 
 DEFAULT_CONFIG = {
     "baseUrl": "",
@@ -34,22 +45,31 @@ DEFAULT_CONFIG = {
 }
 
 SESSIONS = {}
+LOGIN_ATTEMPTS = {}
 
 
 class InventoryHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "same-origin")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+        )
         super().end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        path = parsed.path
 
-        if parsed.path == "/api/session":
+        if path == "/api/session":
             self.send_json({"authenticated": self.is_authenticated(), "user": self.current_user()})
             return
 
-        if parsed.path.startswith("/api/public/assets/"):
-            asset_id = parsed.path.rsplit("/", 1)[-1]
+        if path.startswith("/api/public/assets/"):
+            asset_id = path.rsplit("/", 1)[-1]
             asset = get_asset(asset_id)
             if not asset or asset.get("deletedAt"):
                 self.send_error(404)
@@ -57,34 +77,51 @@ class InventoryHandler(SimpleHTTPRequestHandler):
             self.send_json(public_asset(asset))
             return
 
-        if parsed.path == "/api/state":
+        if path == "/api/state":
             if not self.require_auth():
                 return
-            self.send_json({"assets": load_assets(), "config": load_config(), "users": load_users_public(), "customers": load_customers(), "user": self.current_user()})
+            user = self.current_user()
+            self.send_json(
+                {
+                    "assets": load_assets(),
+                    "config": public_config(load_config(), user),
+                    "users": load_users_public() if is_admin(user) else [],
+                    "customers": load_customers(),
+                    "user": user,
+                }
+            )
             return
 
-        if parsed.path == "/api/users":
-            if not self.require_auth():
+        if path == "/api/users":
+            if not self.require_role("admin"):
                 return
             self.send_json(load_users_public())
             return
 
-        if parsed.path == "/api/customers":
+        if path == "/api/customers":
             if not self.require_auth():
                 return
             self.send_json(load_customers())
             return
 
-        if parsed.path == "/api/backups":
-            if not self.require_auth():
+        if path == "/api/backups":
+            if not self.require_role("admin"):
                 return
             self.send_json(list_backups())
             return
 
-        if parsed.path == "/api/backups/download":
-            if not self.require_auth():
+        if path == "/api/backups/download":
+            if not self.require_role("admin"):
                 return
             self.download_backup(parsed.query)
+            return
+
+        if path.startswith("/api/"):
+            self.send_error(404)
+            return
+
+        if not self.is_allowed_static_path(path):
+            self.send_error(404)
             return
 
         return super().do_GET()
@@ -92,24 +129,32 @@ class InventoryHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/login":
             payload = self.read_json_body()
+            username = payload.get("username") if isinstance(payload, dict) else ""
+            if login_is_limited(self.client_ip(), username):
+                self.send_json({"ok": False, "message": "Zu viele Loginversuche. Bitte später erneut versuchen."}, status=429)
+                return
             if not isinstance(payload, dict) or not verify_login(payload.get("username"), payload.get("password")):
+                record_failed_login(self.client_ip(), username)
                 self.send_json({"ok": False, "message": "Login fehlgeschlagen."}, status=401)
                 return
+            clear_failed_logins(self.client_ip(), username)
             token = create_session(payload.get("username"))
-            self.send_json({"ok": True}, headers=[("Set-Cookie", session_cookie(token))])
+            self.send_json({"ok": True}, headers=[("Set-Cookie", session_cookie(token, self.is_secure_request()))])
             return
 
         if self.path == "/api/logout":
             token = self.session_token()
             if token:
                 SESSIONS.pop(token, None)
-            self.send_json({"ok": True}, headers=[("Set-Cookie", "inventar_session=; Path=/; Max-Age=0; SameSite=Lax")])
+            self.send_json({"ok": True}, headers=[("Set-Cookie", expired_session_cookie(self.is_secure_request()))])
             return
 
         if not self.require_auth():
             return
 
         if self.path == "/api/users":
+            if not self.require_role("admin"):
+                return
             payload = self.read_json_body()
             if not isinstance(payload, list):
                 self.send_error(400, "Expected user list")
@@ -123,6 +168,8 @@ class InventoryHandler(SimpleHTTPRequestHandler):
             return
 
         if self.path == "/api/customers":
+            if not self.require_role("admin", "technician"):
+                return
             payload = self.read_json_body()
             if not isinstance(payload, list):
                 self.send_error(400, "Expected customer list")
@@ -132,6 +179,8 @@ class InventoryHandler(SimpleHTTPRequestHandler):
             return
 
         if self.path == "/api/assets":
+            if not self.require_role("admin", "technician"):
+                return
             payload = self.read_json_body()
             if not isinstance(payload, list):
                 self.send_error(400, "Expected asset list")
@@ -141,6 +190,8 @@ class InventoryHandler(SimpleHTTPRequestHandler):
             return
 
         if self.path == "/api/config":
+            if not self.require_role("admin"):
+                return
             payload = self.read_json_body()
             if not isinstance(payload, dict):
                 self.send_error(400, "Expected config object")
@@ -171,11 +222,15 @@ class InventoryHandler(SimpleHTTPRequestHandler):
             return
 
         if self.path == "/api/backups/create":
+            if not self.require_role("admin"):
+                return
             backup = create_backup("manual")
             self.send_json({"ok": True, "backup": backup.name})
             return
 
         if self.path == "/api/backups/import":
+            if not self.require_role("admin"):
+                return
             payload = self.read_json_body()
             if not isinstance(payload, dict) or not isinstance(payload.get("assets"), list):
                 self.send_error(400, "Expected backup object")
@@ -187,7 +242,9 @@ class InventoryHandler(SimpleHTTPRequestHandler):
             return
 
         if self.path == "/api/update":
-            self.send_json(run_update())
+            if not self.require_role("admin"):
+                return
+            self.send_json(run_update(self.current_user()))
             return
 
         self.send_error(404)
@@ -216,6 +273,15 @@ class InventoryHandler(SimpleHTTPRequestHandler):
         self.send_json({"ok": False, "message": "Nicht angemeldet."}, status=401)
         return False
 
+    def require_role(self, *roles):
+        if not self.require_auth():
+            return False
+        user = self.current_user()
+        if user and user.get("role") in roles:
+            return True
+        self.send_json({"ok": False, "message": "Keine Berechtigung."}, status=403)
+        return False
+
     def is_authenticated(self):
         token = self.session_token()
         if not token:
@@ -226,7 +292,7 @@ class InventoryHandler(SimpleHTTPRequestHandler):
         if session["expires"] < time.time():
             SESSIONS.pop(token, None)
             return False
-        session["expires"] = time.time() + 12 * 60 * 60
+        session["expires"] = time.time() + SESSION_SECONDS
         return True
 
     def current_user(self):
@@ -244,6 +310,19 @@ class InventoryHandler(SimpleHTTPRequestHandler):
         jar.load(header)
         morsel = jar.get("inventar_session")
         return morsel.value if morsel else ""
+
+    def client_ip(self):
+        forwarded = self.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",", 1)[0].strip()
+        return self.client_address[0] if self.client_address else ""
+
+    def is_secure_request(self):
+        proto = self.headers.get("X-Forwarded-Proto", "")
+        return proto.lower() == "https"
+
+    def is_allowed_static_path(self, path):
+        return path in SAFE_STATIC_FILES
 
     def download_backup(self, query):
         params = parse_qs(query)
@@ -273,6 +352,7 @@ def ensure_data():
     ensure_auth()
     ensure_customers()
     migrate_assets_json()
+    migrate_asset_ids()
 
 
 def init_db():
@@ -297,6 +377,20 @@ def migrate_assets_json():
     payload = read_json(ASSETS_FILE, [])
     if isinstance(payload, list) and payload:
         save_assets(payload)
+
+
+def migrate_asset_ids():
+    assets = load_assets()
+    if not assets:
+        return
+    changed = False
+    for asset in assets:
+        asset_id = str(asset.get("id") or "")
+        if len(asset_id) < 24:
+            asset["id"] = secrets.token_urlsafe(24)
+            changed = True
+    if changed:
+        save_assets(assets)
 
 
 def load_assets():
@@ -350,7 +444,7 @@ def normalize_asset(asset):
     if not isinstance(asset, dict):
         asset = {}
     return {
-        "id": asset.get("id") or secrets.token_hex(4),
+        "id": normalize_asset_id(asset.get("id")),
         "name": asset.get("name") or "",
         "inventoryNumber": asset.get("inventoryNumber") or "",
         "category": asset.get("category") or "Notebook",
@@ -367,6 +461,13 @@ def normalize_asset(asset):
         "customerId": asset.get("customerId") or "",
         "deletedAt": asset.get("deletedAt") or "",
     }
+
+
+def normalize_asset_id(value):
+    value = str(value or "").strip()
+    if len(value) >= 24:
+        return value
+    return secrets.token_urlsafe(24)
 
 
 def public_asset(asset):
@@ -386,6 +487,16 @@ def public_asset(asset):
 
 def load_config():
     return normalize_config(read_json(CONFIG_FILE, DEFAULT_CONFIG))
+
+
+def public_config(config, user=None):
+    if is_admin(user):
+        return config
+    return {"baseUrl": config.get("baseUrl", "")}
+
+
+def is_admin(user):
+    return bool(user and user.get("role") == "admin")
 
 
 def normalize_config(config):
@@ -551,12 +662,48 @@ def verify_legacy_login(username, password):
 def create_session(username):
     user = next((entry for entry in load_users() if entry.get("username") == username), {})
     token = secrets.token_urlsafe(32)
-    SESSIONS[token] = {"username": username, "role": user.get("role", "admin"), "expires": time.time() + 12 * 60 * 60}
+    SESSIONS[token] = {"username": username, "role": user.get("role", "admin"), "expires": time.time() + SESSION_SECONDS}
     return token
 
 
-def session_cookie(token):
-    return f"inventar_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={12 * 60 * 60}"
+def session_cookie(token, secure=False):
+    flags = f"inventar_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_SECONDS}"
+    if secure:
+        flags += "; Secure"
+    return flags
+
+
+def expired_session_cookie(secure=False):
+    flags = "inventar_session=; Path=/; Max-Age=0; SameSite=Lax"
+    if secure:
+        flags += "; Secure"
+    return flags
+
+
+def login_key(ip, username):
+    return f"{ip}:{str(username or '').strip().lower()}"
+
+
+def current_login_attempts(ip, username):
+    key = login_key(ip, username)
+    cutoff = time.time() - LOGIN_WINDOW_SECONDS
+    attempts = [stamp for stamp in LOGIN_ATTEMPTS.get(key, []) if stamp >= cutoff]
+    LOGIN_ATTEMPTS[key] = attempts
+    return attempts
+
+
+def login_is_limited(ip, username):
+    return len(current_login_attempts(ip, username)) >= LOGIN_MAX_ATTEMPTS
+
+
+def record_failed_login(ip, username):
+    attempts = current_login_attempts(ip, username)
+    attempts.append(time.time())
+    LOGIN_ATTEMPTS[login_key(ip, username)] = attempts
+
+
+def clear_failed_logins(ip, username):
+    LOGIN_ATTEMPTS.pop(login_key(ip, username), None)
 
 
 def create_backup(reason):
@@ -591,9 +738,11 @@ def prune_backups(keep_last):
         path.unlink(missing_ok=True)
 
 
-def run_update():
+def run_update(user=None):
     if not (ROOT / ".git").exists():
-        return {"ok": False, "message": "Dieses Verzeichnis ist kein Git-Checkout."}
+        result = {"ok": False, "message": "Dieses Verzeichnis ist kein Git-Checkout."}
+        write_audit("update", user, result)
+        return result
     try:
         result = subprocess.run(
             ["git", "pull", "--ff-only"],
@@ -604,14 +753,33 @@ def run_update():
             check=False,
         )
     except FileNotFoundError:
-        return {"ok": False, "message": "Git ist auf diesem System nicht installiert."}
+        result = {"ok": False, "message": "Git ist auf diesem System nicht installiert."}
+        write_audit("update", user, result)
+        return result
     except subprocess.TimeoutExpired:
-        return {"ok": False, "message": "Update hat zu lange gedauert."}
+        result = {"ok": False, "message": "Update hat zu lange gedauert."}
+        write_audit("update", user, result)
+        return result
 
-    return {
+    payload = {
         "ok": result.returncode == 0,
         "message": (result.stdout + result.stderr).strip() or "Keine Ausgabe.",
     }
+    write_audit("update", user, payload)
+    return payload
+
+
+def write_audit(action, user=None, payload=None):
+    entry = {
+        "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "action": action,
+        "user": (user or {}).get("username", ""),
+        "role": (user or {}).get("role", ""),
+        "payload": payload or {},
+    }
+    AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with AUDIT_FILE.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def backup_worker():

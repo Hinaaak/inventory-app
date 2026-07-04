@@ -53,6 +53,7 @@ let selectedCustomerId = "all";
 let selectedCustomerAdminId = null;
 let selectedUserAdminName = null;
 let currentView = "assets";
+let currentUser = null;
 let serverMode = location.protocol === "http:" || location.protocol === "https:";
 let authenticated = false;
 
@@ -172,6 +173,7 @@ async function loadState() {
         users = state.users || [];
         customers = normalizeCustomers(state.customers || []);
         config = normalizeConfig(state.config);
+        currentUser = state.user || null;
         selectedCustomerId = selectedCustomerId === "all" ? "all" : selectedCustomerId;
         selectedId = visibleAssets()[0]?.id || null;
         authenticated = true;
@@ -186,6 +188,7 @@ async function loadState() {
   users = [{ username: "admin", role: "admin" }];
   customers = normalizeCustomers([{ id: "default", name: "Standardkunde", notes: "" }]);
   config = normalizeConfig(readJson(CONFIG_KEY, defaultConfig));
+  currentUser = { username: "local", role: "admin" };
   selectedId = visibleAssets()[0]?.id || null;
   authenticated = !serverMode;
   return true;
@@ -214,7 +217,7 @@ function normalizeAssets(entries) {
   return entries.map((entry) => {
     const { deviceId, osAtDelivery, publicInfo, ...asset } = entry || {};
     return {
-      id: asset.id || newId(),
+      id: normalizeAssetId(asset.id),
       name: "",
       inventoryNumber: "",
       category: "Notebook",
@@ -244,6 +247,7 @@ function normalizeCustomers(entries) {
 }
 
 async function saveAssets() {
+  if (!canEditAssets()) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(assets));
   if (!serverMode) return;
   await fetch("/api/assets", {
@@ -254,6 +258,7 @@ async function saveAssets() {
 }
 
 async function saveCustomers() {
+  if (!canEditAssets()) return;
   if (!serverMode) return;
   await fetch("/api/customers", {
     method: "POST",
@@ -263,6 +268,7 @@ async function saveCustomers() {
 }
 
 async function saveUsers() {
+  if (!isAdmin()) return;
   if (!serverMode) return;
   await fetch("/api/users", {
     method: "POST",
@@ -272,6 +278,7 @@ async function saveUsers() {
 }
 
 async function saveConfig() {
+  if (!isAdmin()) return;
   localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
   if (!serverMode) return;
   await fetch("/api/config", {
@@ -331,6 +338,7 @@ async function login() {
 async function logout() {
   if (serverMode) await fetch("/api/logout", { method: "POST" });
   authenticated = false;
+  currentUser = null;
   showLogin();
 }
 
@@ -348,13 +356,19 @@ function render() {
 }
 
 function renderNavigation() {
+  if (!viewAllowed(currentView)) currentView = "assets";
   Object.entries(sectionMap).forEach(([key, section]) => {
     section.hidden = key !== currentView;
   });
   deviceSidebarTools.hidden = currentView !== "assets";
   document.querySelectorAll(".menu-item").forEach((button) => {
-    button.classList.toggle("active", button.dataset.view === currentView);
+    const allowed = viewAllowed(button.dataset.view);
+    button.hidden = !allowed;
+    button.classList.toggle("active", allowed && button.dataset.view === currentView);
   });
+  document.querySelector("#exportBtn").hidden = !canEditAssets();
+  document.querySelector(".import-button").hidden = !canEditAssets();
+  document.querySelector("#printLabelsBtn").hidden = !authenticated;
 }
 
 function renderNotice() {
@@ -420,8 +434,9 @@ function renderCustomers() {
 function renderForm() {
   const asset = getSelectedAsset();
   const hasAsset = Boolean(asset);
+  const editable = hasAsset && canEditAssets();
   assetForm.querySelectorAll("input, select, textarea, button").forEach((control) => {
-    if (control.id !== "qrPreviewField") control.disabled = !hasAsset;
+    if (control.id !== "qrPreviewField" && control.id !== "copyLinkBtn") control.disabled = !editable;
   });
 
   document.querySelector("#formTitle").textContent = asset?.name || "Neuer Eintrag";
@@ -504,6 +519,7 @@ async function renderMobile(id) {
 }
 
 function createAsset() {
+  if (!canEditAssets()) return;
   const nextNumber = String(assets.length + 1).padStart(4, "0");
   const asset = normalizeAssets([
     {
@@ -522,6 +538,7 @@ function createAsset() {
 }
 
 function deleteSelectedAsset() {
+  if (!canEditAssets()) return;
   const asset = getSelectedAsset();
   if (!asset) return;
   if (!confirm(`"${asset.name}" in den Papierkorb verschieben?`)) return;
@@ -553,6 +570,8 @@ function printLabels() {
 }
 
 function renderAdminLists() {
+  if (!isAdmin() && currentView === "users") return;
+  if (!canEditAssets() && currentView === "customers") return;
   if (!selectedCustomerAdminId || !customers.some((customer) => customer.id === selectedCustomerAdminId)) {
     selectedCustomerAdminId = customers[0]?.id || null;
   }
@@ -721,6 +740,7 @@ function renderAdminLists() {
 }
 
 function addCustomer() {
+  if (!canEditAssets()) return;
   const customer = { id: newId(), name: "Neuer Kunde", notes: "" };
   customers.push(customer);
   selectedCustomerAdminId = customer.id;
@@ -729,6 +749,7 @@ function addCustomer() {
 }
 
 function addUser() {
+  if (!isAdmin()) return;
   const user = { username: `user${users.length + 1}`, role: "technician", password: "BitteAendern123" };
   users.push(user);
   selectedUserAdminName = user.username;
@@ -738,6 +759,7 @@ function addUser() {
 }
 
 function exportBackup() {
+  if (!canEditAssets()) return;
   downloadBackup({
     version: 1,
     exportedAt: new Date().toISOString(),
@@ -747,6 +769,7 @@ function exportBackup() {
 }
 
 function importBackup(event) {
+  if (!canEditAssets()) return;
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
@@ -782,6 +805,7 @@ async function copyCurrentQrText() {
 }
 
 async function saveSettings() {
+  if (!isAdmin()) return;
   config = normalizeConfig({
     baseUrl: baseUrlField.value.trim(),
     backupEnabled: backupEnabledField.checked,
@@ -794,6 +818,7 @@ async function saveSettings() {
 }
 
 async function runUpdate() {
+  if (!isAdmin()) return;
   if (!serverMode) {
     updateStatus.textContent = "Updates funktionieren nur im Serverbetrieb.";
     return;
@@ -828,6 +853,7 @@ async function changePassword() {
 }
 
 async function createBackupNow() {
+  if (!isAdmin()) return;
   if (!serverMode) {
     exportBackup();
     return;
@@ -841,6 +867,10 @@ async function createBackupNow() {
 }
 
 async function loadBackupList() {
+  if (!isAdmin()) {
+    backupList.innerHTML = "";
+    return;
+  }
   if (!serverMode) {
     backupList.innerHTML = '<p class="empty">Backups werden im Dateimodus als Download erstellt.</p>';
     return;
@@ -890,8 +920,33 @@ function defaultBaseUrl() {
 }
 
 function newId() {
-  if (crypto.randomUUID) return crypto.randomUUID().slice(0, 8);
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const values = new Uint32Array(4);
+  crypto.getRandomValues(values);
+  return Array.from(values, (value) => value.toString(16).padStart(8, "0")).join("");
+}
+
+function normalizeAssetId(value) {
+  const id = String(value || "").trim();
+  return id.length >= 24 ? id : newId();
+}
+
+function currentRole() {
+  return currentUser?.role || "readonly";
+}
+
+function isAdmin() {
+  return currentRole() === "admin";
+}
+
+function canEditAssets() {
+  return currentRole() === "admin" || currentRole() === "technician";
+}
+
+function viewAllowed(view) {
+  if (view === "users" || view === "settings") return isAdmin();
+  if (view === "customers" || view === "trash") return canEditAssets();
+  return true;
 }
 
 function statusClass(status) {
