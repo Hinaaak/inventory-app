@@ -51,7 +51,9 @@ let config = { ...defaultConfig };
 let selectedId = null;
 let selectedCustomerId = "all";
 let selectedCustomerAdminId = null;
+let editingCustomerAdminId = null;
 let selectedUserAdminName = null;
+let editingUserAdminName = null;
 let currentView = "assets";
 let currentUser = null;
 let serverMode = location.protocol === "http:" || location.protocol === "https:";
@@ -579,105 +581,165 @@ function renderAdminLists() {
     selectedUserAdminName = users[0]?.username || null;
   }
 
-  const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerAdminId);
+  const editingCustomer = customers.find((customer) => customer.id === editingCustomerAdminId);
   customerAdminList.innerHTML = `
-    <div class="admin-split">
-      <div class="admin-picker">
+    <div class="user-table customer-table">
         ${customers
           .map(
             (customer) => `
-              <button type="button" class="admin-pick ${customer.id === selectedCustomerAdminId ? "active" : ""}" data-customer-id="${escapeHtml(
-                customer.id
-              )}">
+              <button type="button" class="user-row customer-row customer-open" data-customer-id="${escapeHtml(customer.id)}">
                 <strong>${escapeHtml(customer.name)}</strong>
                 <span>${escapeHtml(customer.notes || "Keine Notiz")}</span>
+                <span class="count-pill">${customerAssetCount(customer.id)} Geräte</span>
+                <div class="user-actions">
+                  <button type="button" class="icon-action edit-customer" title="Kunden bearbeiten" aria-label="Kunden bearbeiten">✎</button>
+                  <button type="button" class="icon-action danger-icon delete-customer" title="Kunden löschen" aria-label="Kunden löschen">⌫</button>
+                </div>
               </button>`
           )
           .join("")}
-      </div>
-      ${
-        selectedCustomer
-          ? `<form class="admin-detail" data-customer-id="${escapeHtml(selectedCustomer.id)}">
+    </div>
+    ${
+      editingCustomer
+        ? `<div class="modal-backdrop">
+            <form class="modal-card customer-edit-form" data-customer-id="${escapeHtml(editingCustomer.id)}">
+              <div class="modal-head">
+                <div>
+                  <p class="kicker">Kunde</p>
+                  <h3>Kunde bearbeiten</h3>
+                </div>
+                <button type="button" class="icon-action close-customer-modal" title="Schließen" aria-label="Schließen">×</button>
+              </div>
               <label>
                 Kundenname
-                <input class="customer-name" value="${escapeHtml(selectedCustomer.name)}" />
+                <input class="customer-name" value="${escapeHtml(editingCustomer.name)}" />
               </label>
               <label>
                 Notiz
-                <textarea class="customer-notes" rows="4" placeholder="Interne Kundeninfos">${escapeHtml(selectedCustomer.notes)}</textarea>
+                <textarea class="customer-notes" rows="4" placeholder="Interne Kundeninfos">${escapeHtml(editingCustomer.notes)}</textarea>
               </label>
               <div class="form-actions">
+                <button type="button" class="secondary close-customer-modal">Abbrechen</button>
                 <button type="submit" class="primary">Speichern</button>
               </div>
-            </form>`
-          : '<p class="empty">Noch kein Kunde angelegt.</p>'
-      }
-    </div>`;
-  customerAdminList.querySelectorAll(".admin-pick").forEach((button) => {
-    button.addEventListener("click", () => {
-      selectedCustomerAdminId = button.dataset.customerId;
+            </form>
+          </div>`
+        : ""
+    }`;
+  customerAdminList.querySelectorAll(".edit-customer").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      editingCustomerAdminId = button.closest(".customer-row").dataset.customerId;
       renderAdminLists();
     });
   });
-  customerAdminList.querySelector(".admin-detail")?.addEventListener("submit", async (event) => {
+  customerAdminList.querySelectorAll(".customer-open").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedCustomerId = button.dataset.customerId;
+      selectedId = visibleAssets()[0]?.id || null;
+      currentView = "assets";
+      render();
+    });
+  });
+  customerAdminList.querySelector(".customer-edit-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const customer = customers.find((entry) => entry.id === event.currentTarget.dataset.customerId);
     customer.name = event.currentTarget.querySelector(".customer-name").value.trim();
     customer.notes = event.currentTarget.querySelector(".customer-notes").value.trim();
+    editingCustomerAdminId = null;
     await saveCustomers();
     render();
   });
+  customerAdminList.querySelectorAll(".delete-customer").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const id = event.currentTarget.closest(".customer-row").dataset.customerId;
+      const customer = customers.find((entry) => entry.id === id);
+      if (!customer) return;
+      const count = customerAssetCount(id);
+      if (count > 0) {
+        alert(`Dieser Kunde hat noch ${count} Geräte und kann deshalb nicht gelöscht werden.`);
+        return;
+      }
+      if (customers.length === 1) {
+        alert("Der letzte Kunde kann nicht gelöscht werden.");
+        return;
+      }
+      if (!confirm(`Kunde "${customer.name}" löschen?`)) return;
+      customers = customers.filter((entry) => entry.id !== id);
+      if (selectedCustomerId === id) selectedCustomerId = "all";
+      if (selectedCustomerAdminId === id) selectedCustomerAdminId = customers[0]?.id || null;
+      if (editingCustomerAdminId === id) editingCustomerAdminId = null;
+      await saveCustomers();
+      render();
+    });
+  });
+  customerAdminList.querySelectorAll(".close-customer-modal").forEach((button) => {
+    button.addEventListener("click", () => {
+      editingCustomerAdminId = null;
+      renderAdminLists();
+    });
+  });
 
-  const selectedUser = users.find((user) => user.username === selectedUserAdminName);
+  const editingUser = users.find((user) => user.username === editingUserAdminName);
   userAdminList.innerHTML = `
-    <div class="admin-split">
-      <div class="admin-picker">
+    <div class="user-table">
         ${users
           .map(
             (user) => `
-              <button type="button" class="admin-pick ${user.username === selectedUserAdminName ? "active" : ""}" data-username="${escapeHtml(
-                user.username
-              )}">
+              <div class="user-row" data-username="${escapeHtml(user.username)}">
                 <strong>${escapeHtml(user.username)}</strong>
                 <span>${escapeHtml(roleLabel(user.role))}</span>
-              </button>`
+                <div class="user-actions">
+                  <button type="button" class="icon-action edit-user" title="Benutzer bearbeiten" aria-label="Benutzer bearbeiten">✎</button>
+                  <button type="button" class="icon-action danger-icon delete-user" title="Benutzer löschen" aria-label="Benutzer löschen">⌫</button>
+                </div>
+              </div>`
           )
           .join("")}
-      </div>
-      ${
-        selectedUser
-          ? `<form class="admin-detail" data-username="${escapeHtml(selectedUser.username)}">
+    </div>
+    ${
+      editingUser
+        ? `<div class="modal-backdrop">
+            <form class="modal-card user-edit-form" data-username="${escapeHtml(editingUser.username)}">
+              <div class="modal-head">
+                <div>
+                  <p class="kicker">Benutzer</p>
+                  <h3>Benutzer bearbeiten</h3>
+                </div>
+                <button type="button" class="icon-action close-user-modal" title="Schließen" aria-label="Schließen">×</button>
+              </div>
               <label>
                 Benutzername
-                <input class="user-name" value="${escapeHtml(selectedUser.username)}" />
+                <input class="user-name" value="${escapeHtml(editingUser.username)}" />
               </label>
               <label>
                 Rolle
                 <select class="user-role">
-                  <option value="admin" ${selectedUser.role === "admin" ? "selected" : ""}>Admin</option>
-                  <option value="technician" ${selectedUser.role === "technician" ? "selected" : ""}>Techniker</option>
-                  <option value="readonly" ${selectedUser.role === "readonly" ? "selected" : ""}>Nur Lesen</option>
+                  <option value="admin" ${editingUser.role === "admin" ? "selected" : ""}>Admin</option>
+                  <option value="technician" ${editingUser.role === "technician" ? "selected" : ""}>Techniker</option>
+                  <option value="readonly" ${editingUser.role === "readonly" ? "selected" : ""}>Nur Lesen</option>
                 </select>
               </label>
               <label>
-                Neues Passwort
-                <input class="user-password" type="password" placeholder="Optional" />
+                Passwort ändern
+                <input class="user-password" type="password" placeholder="Leer lassen, wenn es gleich bleiben soll" />
               </label>
               <div class="form-actions">
-                <button type="button" class="danger delete-user">Löschen</button>
+                <button type="button" class="secondary close-user-modal">Abbrechen</button>
                 <button type="submit" class="primary">Speichern</button>
               </div>
-            </form>`
-          : '<p class="empty">Noch kein Benutzer angelegt.</p>'
-      }
-    </div>`;
-  userAdminList.querySelectorAll(".admin-pick").forEach((button) => {
+            </form>
+          </div>`
+        : ""
+    }`;
+  userAdminList.querySelectorAll(".edit-user").forEach((button) => {
     button.addEventListener("click", () => {
-      selectedUserAdminName = button.dataset.username;
+      editingUserAdminName = button.closest(".user-row").dataset.username;
       renderAdminLists();
     });
   });
-  userAdminList.querySelector(".admin-detail")?.addEventListener("submit", async (event) => {
+  userAdminList.querySelector(".user-edit-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const user = users.find((entry) => entry.username === event.currentTarget.dataset.username);
     const nextUsername = event.currentTarget.querySelector(".user-name").value.trim();
@@ -687,23 +749,33 @@ function renderAdminLists() {
     const password = event.currentTarget.querySelector(".user-password").value;
     if (password) user.password = password;
     selectedUserAdminName = nextUsername;
+    editingUserAdminName = null;
     await saveUsers();
     users.forEach((entry) => delete entry.password);
     render();
   });
-  userAdminList.querySelector(".delete-user")?.addEventListener("click", async (event) => {
-    const username = event.currentTarget.closest(".admin-detail").dataset.username;
-    const user = users.find((entry) => entry.username === username);
-    if (!user) return;
-    if (user.role === "admin" && users.filter((entry) => entry.role === "admin").length === 1) {
-      alert("Der letzte Admin kann nicht gelöscht werden.");
-      return;
-    }
-    if (!confirm(`Benutzer "${username}" löschen?`)) return;
-    users = users.filter((entry) => entry.username !== username);
-    selectedUserAdminName = users[0]?.username || null;
-    await saveUsers();
-    render();
+  userAdminList.querySelectorAll(".delete-user").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const username = event.currentTarget.closest(".user-row").dataset.username;
+      const user = users.find((entry) => entry.username === username);
+      if (!user) return;
+      if (user.role === "admin" && users.filter((entry) => entry.role === "admin").length === 1) {
+        alert("Der letzte Admin kann nicht gelöscht werden.");
+        return;
+      }
+      if (!confirm(`Benutzer "${username}" löschen?`)) return;
+      users = users.filter((entry) => entry.username !== username);
+      selectedUserAdminName = users[0]?.username || null;
+      if (editingUserAdminName === username) editingUserAdminName = null;
+      await saveUsers();
+      render();
+    });
+  });
+  userAdminList.querySelectorAll(".close-user-modal").forEach((button) => {
+    button.addEventListener("click", () => {
+      editingUserAdminName = null;
+      renderAdminLists();
+    });
   });
 
   trashList.innerHTML = deletedAssets().length
@@ -744,6 +816,7 @@ function addCustomer() {
   const customer = { id: newId(), name: "Neuer Kunde", notes: "" };
   customers.push(customer);
   selectedCustomerAdminId = customer.id;
+  editingCustomerAdminId = customer.id;
   saveCustomers();
   render();
 }
@@ -753,6 +826,7 @@ function addUser() {
   const user = { username: `user${users.length + 1}`, role: "technician", password: "BitteAendern123" };
   users.push(user);
   selectedUserAdminName = user.username;
+  editingUserAdminName = user.username;
   saveUsers();
   users.forEach((entry) => delete entry.password);
   render();
@@ -959,6 +1033,10 @@ function roleLabel(role) {
   if (role === "admin") return "Admin";
   if (role === "readonly") return "Nur Lesen";
   return "Techniker";
+}
+
+function customerAssetCount(customerId) {
+  return assets.filter((asset) => !asset.deletedAt && asset.customerId === customerId).length;
 }
 
 function infoRow(label, value) {

@@ -11,6 +11,9 @@ Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 - README überarbeitet und Installationsanleitung für Ubuntu 24.04 ergänzt.
 - Security-Härtung begonnen: interne Dateien vor Webzugriff geschützt, Security-Header ergänzt, Rollen serverseitig geprüft, Login-Rate-Limit eingebaut und QR-IDs auf lange Tokens umgestellt.
 - Update-Funktion auf Admins beschränkt und Update-Ergebnisse in `data/audit.log` protokolliert.
+- Benutzerverwaltung optisch verschlankt und Bearbeitung in einen Dialog ausgelagert.
+- Kundenverwaltung optisch an die Benutzerverwaltung angepasst, inklusive Bearbeitungsdialog und Geräteanzahl je Kunde.
+- Klick auf einen Kunden öffnet direkt die gefilterte Geräteliste dieses Kunden.
 
 ## 2026-07-03
 
