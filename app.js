@@ -587,7 +587,7 @@ function renderAdminLists() {
         ${customers
           .map(
             (customer) => `
-              <button type="button" class="user-row customer-row customer-open" data-customer-id="${escapeHtml(customer.id)}">
+              <div class="user-row customer-row customer-open" role="button" tabindex="0" data-customer-id="${escapeHtml(customer.id)}">
                 <strong>${escapeHtml(customer.name)}</strong>
                 <span>${escapeHtml(customer.notes || "Keine Notiz")}</span>
                 <span class="count-pill">${customerAssetCount(customer.id)} Geräte</span>
@@ -595,7 +595,7 @@ function renderAdminLists() {
                   <button type="button" class="icon-action edit-customer" title="Kunden bearbeiten" aria-label="Kunden bearbeiten">✎</button>
                   <button type="button" class="icon-action danger-icon delete-customer" title="Kunden löschen" aria-label="Kunden löschen">⌫</button>
                 </div>
-              </button>`
+              </div>`
           )
           .join("")}
     </div>
@@ -633,12 +633,18 @@ function renderAdminLists() {
       renderAdminLists();
     });
   });
-  customerAdminList.querySelectorAll(".customer-open").forEach((button) => {
-    button.addEventListener("click", () => {
-      selectedCustomerId = button.dataset.customerId;
+  customerAdminList.querySelectorAll(".customer-open").forEach((row) => {
+    const openCustomer = () => {
+      selectedCustomerId = row.dataset.customerId;
       selectedId = visibleAssets()[0]?.id || null;
       currentView = "assets";
       render();
+    };
+    row.addEventListener("click", openCustomer);
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openCustomer();
     });
   });
   customerAdminList.querySelector(".customer-edit-form")?.addEventListener("submit", async (event) => {
